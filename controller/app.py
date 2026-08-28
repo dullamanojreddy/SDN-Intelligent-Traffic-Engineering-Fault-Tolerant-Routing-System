@@ -258,12 +258,12 @@ class SDNTrafficEngineApp:
         """
         while True:
             try:
-                await asyncio.sleep(2.0)
+                await asyncio.sleep(0.2)
                 connected_switches = set(dp.sw_id for dp in self.switch_manager.datapaths.values())
                 if len(connected_switches) >= 7 or ("s1" in connected_switches and "s7" in connected_switches):
                     await self.packet_handler.install_proactive_mesh_routes()
                     log.info("[PROACTIVE ROUTE] Baseline OpenFlow forwarding rules successfully provisioned for all mesh switches.")
-                    await asyncio.sleep(60.0)
+                    await asyncio.sleep(30.0)
             except asyncio.CancelledError:
                 break
             except Exception as e:

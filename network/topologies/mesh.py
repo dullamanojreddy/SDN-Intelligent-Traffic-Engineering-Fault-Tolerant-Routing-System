@@ -22,7 +22,7 @@ class MultiPathMeshTopo(Topo):
         switches = {}
         for i in range(1, 8):
             dpid = f"{i:016x}"
-            switches[f's{i}'] = self.addSwitch(f's{i}', dpid=dpid, protocols='OpenFlow13')
+            switches[f's{i}'] = self.addSwitch(f's{i}', dpid=dpid, protocols='OpenFlow13', stp=True)
 
         # Hosts
         h1 = self.addHost('h1', ip='10.0.0.1/24', mac='00:00:00:00:00:01')
