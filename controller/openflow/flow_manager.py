@@ -112,17 +112,14 @@ class FlowManager:
                 dp, match_ip, out_port=out_p, priority=priority, idle_timeout=idle_timeout, hard_timeout=hard_timeout
             )
             
-            # ARP Flow Rule (for direct MAC / ARP resolution)
-            if dst_mac:
-                match_arp = {
-                    "eth_type": ETH_TYPE_ARP,
-                    "eth_dst": dst_mac,
-                }
-                ok2 = await self.install_flow(
-                    dp, match_arp, out_port=out_p, priority=priority, idle_timeout=idle_timeout, hard_timeout=hard_timeout
-                )
-            else:
-                ok2 = True
+            # ARP Flow Rule (for direct ARP resolution using target IPv4 address)
+            match_arp = {
+                "eth_type": ETH_TYPE_ARP,
+                "arp_tpa": dst_ip,
+            }
+            ok2 = await self.install_flow(
+                dp, match_arp, out_port=out_p, priority=priority, idle_timeout=idle_timeout, hard_timeout=hard_timeout
+            )
                 
             if not (ok1 and ok2):
                 all_success = False

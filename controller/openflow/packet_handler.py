@@ -173,7 +173,10 @@ class PacketHandler:
             if target_ip in self.host_ip_table:
                 dst_sw, dst_port, dst_mac = self.host_ip_table[target_ip]
                 # Controller generates Proxy ARP Reply
-                reply_eth_hdr = str_to_mac(arp.src_mac) + str_to_mac(dst_mac) + struct.pack("!H", ETH_TYPE_ARP)
+                # Ethernet Frame: Destination MAC = Requester (h1), Source MAC = Target (h7)
+                eth_dst_mac = str_to_mac(arp.src_mac)
+                eth_src_mac = str_to_mac(dst_mac)
+                reply_eth_hdr = eth_dst_mac + eth_src_mac + struct.pack("!H", ETH_TYPE_ARP)
                 reply_arp_hdr = struct.pack(
                     "!HHBBH6s4s6s4s",
                     1, 0x0800, 6, 4, 2,  # Opcode 2 (Reply)

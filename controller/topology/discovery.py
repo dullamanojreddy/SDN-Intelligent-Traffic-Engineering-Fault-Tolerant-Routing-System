@@ -100,6 +100,9 @@ class TopologyDiscovery:
             self.network_graph.add_link(
                 src_sw, dst_sw, src_port, dst_port, capacity_mbps=100.0, latency_ms=5.0
             )
+            self.network_graph.add_link(
+                dst_sw, src_sw, dst_port, src_port, capacity_mbps=100.0, latency_ms=5.0
+            )
             
             log.info(f"Discovered Link: {src_sw}:p{src_port} <---> {dst_sw}:p{dst_port}")
             if self.event_manager:
