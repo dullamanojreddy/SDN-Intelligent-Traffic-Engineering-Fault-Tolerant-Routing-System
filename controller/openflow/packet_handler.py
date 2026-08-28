@@ -353,6 +353,21 @@ class PacketHandler:
         Pre-installs baseline shortest-path OpenFlow rules for known default hosts.
         Guarantees zero initial packet drops in Mininet without waiting for table-miss roundtrips.
         """
+        # 1. Install loop-prevention drop rules for IPv6 multicast storms on all active datapaths
+        for dp in list(self.switch_manager.datapaths.values()):
+            try:
+                # Priority 5: Drop IPv6 Neighbor Discovery multicast loop storms
+                ipv6_mod = build_flow_mod(
+                    priority=5,
+                    command=OFPFC_ADD,
+                    match=build_match(eth_type=0x86dd),
+                    instructions=b"",
+                )
+                await dp.send_msg(ipv6_mod)
+            except Exception:
+                pass
+
+        # 2. Pre-install shortest path forwarding for default mesh hosts
         hosts = list(self.host_ip_table.items())
         for src_ip, (src_sw, src_port, src_mac) in hosts:
             for dst_ip, (dst_sw, dst_port, dst_mac) in hosts:
