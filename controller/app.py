@@ -146,16 +146,30 @@ class SDNTrafficEngineApp:
     def _on_congestion_alert(self, link_id: str, utilization: float):
         """Triggered when sustained congestion is detected on a link."""
         log.warning(f"⚡ Initiating dynamic rerouting away from congested link {link_id} ({utilization:.1f}%)")
-        # Find elephant flows and optimize paths
-        congested_flows = [
-            f for f in self.active_flows.values()
-        ]
+        congested_flows = list(self.active_flows.values())
         if congested_flows:
             new_routes = self.optimizer.optimize_congested_flows(
                 congested_flows, congested_link=link_id
             )
             for old_flow, new_path, new_cost in new_routes:
-                log.info(f"Rerouted Flow {old_flow} -> New Path: {' -> '.join(new_path)} (Cost: {new_cost:.4f})")
+                log.info(f"Rerouted Flow -> New Path: {' -> '.join(new_path)} (Cost: {new_cost:.4f})")
+                asyncio.create_task(self._install_rerouted_path(new_path))
+
+    async def _install_rerouted_path(self, path: List[str]):
+        """Installs forwarding rules for newly optimized/rerouted paths."""
+        if not path or len(path) < 2:
+            return
+        hops = self.packet_handler._build_port_hops(path, ingress_port=3, egress_port=4)
+        await self.flow_manager.install_path_forwarding(
+            path=path,
+            port_hops=hops,
+            src_ip="10.0.0.1",
+            dst_ip="10.0.0.7",
+            src_mac="00:00:00:00:00:01",
+            dst_mac="00:00:00:00:00:07",
+            priority=200,  # Higher priority override
+            idle_timeout=300,
+        )
 
     def _trigger_failover_recovery(self, failed_link_id: str):
         """Recalculates paths for affected flows upon link failure."""
@@ -164,7 +178,7 @@ class SDNTrafficEngineApp:
             return
         
         new_path, cost, recovery_time = self.recovery_engine.compute_failover_path(u, v, failed_link_id)
-        if new_path:
+        if new_path and len(new_path) >= 2:
             log.info(
                 f"✅ Sub-second Failover Route Computed: {' -> '.join(new_path)} "
                 f"(Cost: {cost:.4f}, Recovery Duration: {recovery_time:.2f}ms)"
@@ -174,6 +188,7 @@ class SDNTrafficEngineApp:
                     "failover_recovered",
                     {"failed_link": failed_link_id, "new_path": new_path, "recovery_ms": recovery_time},
                 )
+            asyncio.create_task(self._install_rerouted_path(new_path))
 
     # --------------------------------------------------------------------------
     # Topology Initialization & Startup

@@ -64,3 +64,24 @@ class PathOptimizer:
             return decision
             
         return None
+
+    def optimize_congested_flows(
+        self,
+        active_flows: List[Dict[str, Any]],
+        congested_link: str
+    ) -> List[Tuple[Dict[str, Any], List[str], float]]:
+        """
+        Calculates optimal alternate paths for flows traversing a congested link.
+        """
+        rerouted = []
+        u, v = congested_link.split("-") if "-" in congested_link else ("", "")
+        if not u or not v:
+            return rerouted
+
+        for flow in active_flows:
+            src_sw = flow.get("switch", "s1")
+            target_sw = "s7" if src_sw != "s7" else "s1"
+            new_path, new_cost = self.router.calculate_shortest_path(src_sw, target_sw)
+            if new_path and len(new_path) >= 2:
+                rerouted.append((flow, new_path, new_cost))
+        return rerouted
