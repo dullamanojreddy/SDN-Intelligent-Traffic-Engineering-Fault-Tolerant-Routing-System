@@ -153,23 +153,51 @@ class SDNTrafficEngineApp:
             )
             for old_flow, new_path, new_cost in new_routes:
                 log.info(f"Rerouted Flow -> New Path: {' -> '.join(new_path)} (Cost: {new_cost:.4f})")
-                asyncio.create_task(self._install_rerouted_path(new_path))
+                asyncio.create_task(self._install_rerouted_flow(old_flow, new_path))
 
-    async def _install_rerouted_path(self, path: List[str]):
-        """Installs forwarding rules for newly optimized/rerouted paths."""
+    async def _install_rerouted_flow(self, flow_info: Dict[str, Any], path: List[str]):
+        """Installs forwarding rules dynamically for a specific rerouted flow using topology-derived endpoints."""
         if not path or len(path) < 2:
             return
-        hops = self.packet_handler._build_port_hops(path, ingress_port=3, egress_port=4)
+        match = flow_info.get("match", {})
+        dst_ip = match.get("ipv4_dst")
+        if not dst_ip:
+            return
+
+        dst_host_info = self.packet_handler.host_ip_table.get(dst_ip)
+        if not dst_host_info:
+            return
+        dst_sw, dst_port, dst_mac = dst_host_info
+
+        src_sw = path[0]
+        src_ip = "0.0.0.0"
+        src_port = 1
+        src_mac = None
+        for ip, (sw, port, mac) in self.packet_handler.host_ip_table.items():
+            if sw == src_sw and ip != dst_ip:
+                src_ip = ip
+                src_port = port
+                src_mac = mac
+                break
+
+        hops = self.packet_handler._build_port_hops(path, ingress_port=src_port, egress_port=dst_port)
         await self.flow_manager.install_path_forwarding(
             path=path,
             port_hops=hops,
-            src_ip="10.0.0.1",
-            dst_ip="10.0.0.7",
-            src_mac="00:00:00:00:00:01",
-            dst_mac="00:00:00:00:00:07",
+            src_ip=src_ip,
+            dst_ip=dst_ip,
+            src_mac=src_mac,
+            dst_mac=dst_mac,
             priority=200,  # Higher priority override
             idle_timeout=300,
         )
+
+    async def _install_rerouted_path(self, path: List[str]):
+        """Fallback dynamic rerouter for all flows traversing the path endpoints."""
+        if not path or len(path) < 2:
+            return
+        for flow in list(self.active_flows.values()):
+            await self._install_rerouted_flow(flow, path)
 
     def _trigger_failover_recovery(self, failed_link_id: str):
         """Recalculates paths for affected flows upon link failure."""
@@ -188,7 +216,8 @@ class SDNTrafficEngineApp:
                     "failover_recovered",
                     {"failed_link": failed_link_id, "new_path": new_path, "recovery_ms": recovery_time},
                 )
-            asyncio.create_task(self._install_rerouted_path(new_path))
+            for flow in list(self.active_flows.values()):
+                asyncio.create_task(self._install_rerouted_flow(flow, new_path))
 
     # --------------------------------------------------------------------------
     # Topology Initialization & Startup

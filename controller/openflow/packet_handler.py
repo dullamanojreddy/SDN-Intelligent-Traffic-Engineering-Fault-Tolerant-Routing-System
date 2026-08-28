@@ -85,26 +85,27 @@ class PacketHandler:
         self, path: List[str], ingress_port: int, egress_port: int
     ) -> List[Tuple[str, int, int]]:
         """Constructs (switch_id, in_port, out_port) tuples for every switch along a path."""
+        if not path:
+            return []
+        if len(path) == 1:
+            return [(path[0], ingress_port, egress_port)]
+            
         port_hops: List[Tuple[str, int, int]] = []
         for i in range(len(path)):
             curr_sw = path[i]
             if i == 0:
                 next_sw = path[1]
-                edge_data = self.network_graph.graph.get_edge_data(curr_sw, next_sw, default={})
-                out_p = edge_data.get("src_port", 1)
+                out_p = self.network_graph.get_link_output_port(curr_sw, next_sw) or 1
                 port_hops.append((curr_sw, ingress_port, out_p))
             elif i == len(path) - 1:
                 prev_sw = path[i - 1]
-                edge_data = self.network_graph.graph.get_edge_data(prev_sw, curr_sw, default={})
-                in_p = edge_data.get("dst_port", 1)
+                in_p = self.network_graph.get_link_input_port(prev_sw, curr_sw) or 1
                 port_hops.append((curr_sw, in_p, egress_port))
             else:
                 prev_sw = path[i - 1]
                 next_sw = path[i + 1]
-                edge_in = self.network_graph.graph.get_edge_data(prev_sw, curr_sw, default={})
-                edge_out = self.network_graph.graph.get_edge_data(curr_sw, next_sw, default={})
-                in_p = edge_in.get("dst_port", 1)
-                out_p = edge_out.get("src_port", 1)
+                in_p = self.network_graph.get_link_input_port(prev_sw, curr_sw) or 1
+                out_p = self.network_graph.get_link_output_port(curr_sw, next_sw) or 1
                 port_hops.append((curr_sw, in_p, out_p))
         return port_hops
 

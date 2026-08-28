@@ -107,3 +107,20 @@ class NetworkGraph:
         for u, v, d in active_edges:
             sub.add_edge(u, v, **d)
         return sub
+
+    def get_link_ports(self, src_dpid: str, dst_dpid: str) -> Optional[Tuple[int, int]]:
+        """Returns (src_port, dst_port) for a directed edge between two switches."""
+        if self.graph.has_edge(src_dpid, dst_dpid):
+            edge = self.graph[src_dpid][dst_dpid]
+            return (edge.get("src_port", 1), edge.get("dst_port", 1))
+        return None
+
+    def get_link_output_port(self, src_dpid: str, dst_dpid: str) -> Optional[int]:
+        """Returns the output port on src_dpid that connects to dst_dpid."""
+        ports = self.get_link_ports(src_dpid, dst_dpid)
+        return ports[0] if ports else None
+
+    def get_link_input_port(self, src_dpid: str, dst_dpid: str) -> Optional[int]:
+        """Returns the input port on dst_dpid that connects from src_dpid."""
+        ports = self.get_link_ports(src_dpid, dst_dpid)
+        return ports[1] if ports else None
