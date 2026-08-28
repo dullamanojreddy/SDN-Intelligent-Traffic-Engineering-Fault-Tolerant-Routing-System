@@ -142,6 +142,11 @@ class SDNTrafficEngineApp:
                     self.event_manager.emit("link_failure", ev.model_dump() if hasattr(ev, 'model_dump') else ev.__dict__)
                 # Trigger failover recalculation
                 self._trigger_failover_recovery(ev.data.get("link_id", ""))
+        else:
+            # Port is UP - update any matching links to active
+            for u, v, d in self.network_graph.graph.edges(data=True):
+                if (u == dp.sw_id and d.get("src_port") == status.port_no) or (v == dp.sw_id and d.get("dst_port") == status.port_no):
+                    self.network_graph.update_link_metrics(u, v, utilization_pct=d.get("utilization_pct", 0.0), is_active=True)
 
     def _on_congestion_alert(self, link_id: str, utilization: float):
         """Triggered when sustained congestion is detected on a link."""

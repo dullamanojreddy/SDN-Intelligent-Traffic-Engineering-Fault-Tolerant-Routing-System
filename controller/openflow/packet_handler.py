@@ -244,47 +244,63 @@ class PacketHandler:
         dst_ip = ipv4.dst_ip
         src_ip = ipv4.src_ip
 
-        # If destination host switch is not yet known, learn or drop
+        # Resolve destination endpoint
         if dst_ip not in self.host_ip_table:
             log.warning(f"Destination IP {dst_ip} unknown in host table")
             return
 
         dst_sw, dst_host_port, dst_mac = self.host_ip_table[dst_ip]
-        src_host_port = in_port
+
+        # Resolve true origin endpoint (either from host_ip_table or packet ingress)
+        if src_ip in self.host_ip_table:
+            origin_sw, origin_port, origin_mac = self.host_ip_table[src_ip]
+        else:
+            origin_sw, origin_port, origin_mac = dp.sw_id, in_port, eth.src_mac
 
         # 1. Local delivery on the same switch
-        if src_sw == dst_sw:
-            match_kwargs = {"eth_type": ETH_TYPE_IP, "ipv4_dst": dst_ip}
-            await self.flow_manager.install_flow(dp, match_kwargs, out_port=dst_host_port, priority=100)
+        if origin_sw == dst_sw:
+            # Install forward and reverse IP + ARP flows for instant intra-switch line-rate delivery
+            await self.flow_manager.install_flow(
+                dp, {"eth_type": ETH_TYPE_IP, "ipv4_dst": dst_ip}, out_port=dst_host_port, priority=100
+            )
+            await self.flow_manager.install_flow(
+                dp, {"eth_type": ETH_TYPE_ARP, "arp_tpa": dst_ip}, out_port=dst_host_port, priority=100
+            )
+            await self.flow_manager.install_flow(
+                dp, {"eth_type": ETH_TYPE_IP, "ipv4_dst": src_ip}, out_port=origin_port, priority=100
+            )
+            await self.flow_manager.install_flow(
+                dp, {"eth_type": ETH_TYPE_ARP, "arp_tpa": src_ip}, out_port=origin_port, priority=100
+            )
             
             actions = build_action_output(dst_host_port)
             pkt_out = build_packet_out(
-                buffer_id=buffer_id,
+                buffer_id=0xffffffff,
                 in_port=in_port,
                 actions=actions,
-                data=raw_pkt if buffer_id == 0xffffffff else b"",
+                data=raw_pkt,
             )
             await dp.send_msg(pkt_out)
             return
 
         # 2. Multi-hop delivery across switches via Dijkstra Multi-Metric Routing
-        path_fwd, cost_fwd = self.router.calculate_shortest_path(src_sw, dst_sw)
-        path_rev, cost_rev = self.router.calculate_shortest_path(dst_sw, src_sw)
+        path_fwd, cost_fwd = self.router.calculate_shortest_path(origin_sw, dst_sw)
+        path_rev, cost_rev = self.router.calculate_shortest_path(dst_sw, origin_sw)
         
         if not path_fwd or len(path_fwd) < 2:
-            log.warning(f"No reachable path from {src_sw} to {dst_sw}")
+            log.warning(f"No reachable path from {origin_sw} to {dst_sw}")
             return
 
         log.info(f"⚡ Dijkstra Path Computed: {' -> '.join(path_fwd)} (Cost: {cost_fwd:.4f}) for {src_ip} -> {dst_ip}")
         if self.event_manager:
             self.event_manager.emit(
                 "routing_decision",
-                {"src": src_sw, "dst": dst_sw, "path": path_fwd, "cost": cost_fwd, "traffic": f"{src_ip} -> {dst_ip}"},
+                {"src": origin_sw, "dst": dst_sw, "path": path_fwd, "cost": cost_fwd, "traffic": f"{src_ip} -> {dst_ip}"},
             )
 
         # Build port hops for forward and reverse directions
-        hops_fwd = self._build_port_hops(path_fwd, ingress_port=src_host_port, egress_port=dst_host_port)
-        hops_rev = self._build_port_hops(path_rev, ingress_port=dst_host_port, egress_port=src_host_port) if path_rev else []
+        hops_fwd = self._build_port_hops(path_fwd, ingress_port=origin_port, egress_port=dst_host_port)
+        hops_rev = self._build_port_hops(path_rev, ingress_port=dst_host_port, egress_port=origin_port) if path_rev else []
 
         # Install bidirectional flow forwarding rules
         if hops_rev and path_rev:
@@ -295,7 +311,7 @@ class PacketHandler:
                 reverse_hops=hops_rev,
                 src_ip=src_ip,
                 dst_ip=dst_ip,
-                src_mac=eth.src_mac,
+                src_mac=origin_mac or eth.src_mac,
                 dst_mac=dst_mac,
                 priority=100,
                 idle_timeout=300,
@@ -307,20 +323,62 @@ class PacketHandler:
                 port_hops=hops_fwd,
                 src_ip=src_ip,
                 dst_ip=dst_ip,
-                src_mac=eth.src_mac,
+                src_mac=origin_mac or eth.src_mac,
                 dst_mac=dst_mac,
                 priority=100,
                 idle_timeout=300,
                 hard_timeout=0,
             )
 
-        # Send initial packet out along first forward hop
-        first_out_port = hops_fwd[0][2]
-        actions = build_action_output(first_out_port)
+        # Determine out_port for current switch dp along the forward path
+        out_port_for_dp = None
+        for sw_id, in_p, out_p in hops_fwd:
+            if sw_id == dp.sw_id:
+                out_port_for_dp = out_p
+                break
+        if out_port_for_dp is None:
+            out_port_for_dp = hops_fwd[0][2]
+
+        actions = build_action_output(out_port_for_dp)
         pkt_out = build_packet_out(
-            buffer_id=buffer_id,
+            buffer_id=0xffffffff,
             in_port=in_port,
             actions=actions,
-            data=raw_pkt if buffer_id == 0xffffffff else b"",
+            data=raw_pkt,
         )
         await dp.send_msg(pkt_out)
+
+    async def install_proactive_mesh_routes(self):
+        """
+        Pre-installs baseline shortest-path OpenFlow rules for known default hosts.
+        Guarantees zero initial packet drops in Mininet without waiting for table-miss roundtrips.
+        """
+        hosts = list(self.host_ip_table.items())
+        for src_ip, (src_sw, src_port, src_mac) in hosts:
+            for dst_ip, (dst_sw, dst_port, dst_mac) in hosts:
+                if src_ip == dst_ip:
+                    continue
+                if src_sw == dst_sw:
+                    dp = self.switch_manager.get_datapath_by_name(src_sw)
+                    if dp:
+                        await self.flow_manager.install_flow(
+                            dp, {"eth_type": ETH_TYPE_IP, "ipv4_dst": dst_ip}, out_port=dst_port, priority=100
+                        )
+                        await self.flow_manager.install_flow(
+                            dp, {"eth_type": ETH_TYPE_ARP, "arp_tpa": dst_ip}, out_port=dst_port, priority=100
+                        )
+                else:
+                    path_fwd, _ = self.router.calculate_shortest_path(src_sw, dst_sw)
+                    if path_fwd and len(path_fwd) >= 2:
+                        hops_fwd = self._build_port_hops(path_fwd, ingress_port=src_port, egress_port=dst_port)
+                        await self.flow_manager.install_path_forwarding(
+                            path=path_fwd,
+                            port_hops=hops_fwd,
+                            src_ip=src_ip,
+                            dst_ip=dst_ip,
+                            src_mac=src_mac,
+                            dst_mac=dst_mac,
+                            priority=100,
+                            idle_timeout=300,
+                        )
+        log.info("Proactive baseline OpenFlow forwarding rules installed for mesh endpoints.")

@@ -509,26 +509,29 @@ def parse_packet_in(data: bytes) -> Optional[DecodedPacketIn]:
     
     offset = 24
     in_port = None
-    if len(data) > offset + 4:
+    if len(data) >= offset + 4:
         match_type, match_len = struct.unpack("!HH", data[offset:offset+4])
-        oxm_data = data[offset+4 : offset+match_len]
-        padded_match_len = (match_len + 7) & ~7
-        offset += padded_match_len + 2  # skip match + 2-byte pad
-        
-        # Parse OXM for in_port
-        idx = 0
-        while idx + 4 <= len(oxm_data):
-            oxm_hdr = struct.unpack("!I", oxm_data[idx:idx+4])[0]
-            oxm_class = (oxm_hdr >> 16) & 0xffff
-            field = (oxm_hdr >> 9) & 0x7f
-            length = oxm_hdr & 0xff
-            idx += 4
-            if oxm_class == OFPXMC_OPENFLOW_BASIC and field == OFPXMT_OFB_IN_PORT and length == 4:
-                if idx + 4 <= len(oxm_data):
-                    in_port = struct.unpack("!I", oxm_data[idx:idx+4])[0]
-            idx += length
+        if match_len >= 4 and len(data) >= offset + match_len:
+            oxm_data = data[offset+4 : offset+match_len]
+            padded_match_len = (match_len + 7) & ~7
+            offset += padded_match_len + 2  # skip match + 2-byte pad
+            
+            # Parse OXM for in_port
+            idx = 0
+            while idx + 4 <= len(oxm_data):
+                oxm_hdr = struct.unpack("!I", oxm_data[idx:idx+4])[0]
+                oxm_class = (oxm_hdr >> 16) & 0xffff
+                field = (oxm_hdr >> 9) & 0x7f
+                length = oxm_hdr & 0xff
+                idx += 4
+                if length == 0:
+                    break
+                if oxm_class == OFPXMC_OPENFLOW_BASIC and field == OFPXMT_OFB_IN_PORT and length == 4:
+                    if idx + 4 <= len(oxm_data):
+                        in_port = struct.unpack("!I", oxm_data[idx:idx+4])[0]
+                idx += length
 
-    pkt_data = data[offset:]
+    pkt_data = data[offset:] if len(data) >= offset else b""
     return DecodedPacketIn(buffer_id, total_len, reason, table_id, cookie, in_port, pkt_data)
 
 

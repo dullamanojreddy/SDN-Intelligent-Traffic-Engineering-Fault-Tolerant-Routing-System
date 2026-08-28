@@ -55,7 +55,9 @@ class FlowManager:
         
         success = await datapath.send_msg(flow_mod)
         if success:
-            flow_id = f"{datapath.sw_id}_{match_kwargs.get('eth_dst', '')}_{match_kwargs.get('ipv4_dst', '')}_{out_port}"
+            dst_target = match_kwargs.get("ipv4_dst") or match_kwargs.get("arp_tpa") or match_kwargs.get("eth_dst", "")
+            eth_t = match_kwargs.get("eth_type", "")
+            flow_id = f"{datapath.sw_id}_{eth_t}_{dst_target}_{out_port}"
             self.active_flows[flow_id] = {
                 "switch": datapath.sw_id,
                 "dpid": datapath.dpid,
