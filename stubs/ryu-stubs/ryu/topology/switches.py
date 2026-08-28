@@ -1,5 +1,5 @@
 """Ryu Topology Switches Stubs"""
-from typing import List, Dict, Any
+from typing import Any, List, Optional
 
 class Port:
     """Represents an OpenFlow switch port."""
@@ -21,13 +21,3 @@ class Link:
     def __init__(self) -> None:
         self.src: Port = Port()
         self.dst: Port = Port()
-
-def get_switch(app: Any, dpid: Any = None) -> List[Any]:
-    return []
-
-def get_link(app: Any, dpid: Any = None) -> List[Any]:
-    return []
-
-def get_host(app: Any, dpid: Any = None) -> List[Any]:
-    return []
-

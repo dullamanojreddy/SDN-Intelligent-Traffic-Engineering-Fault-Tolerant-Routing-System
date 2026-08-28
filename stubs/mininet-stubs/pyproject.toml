@@ -1,0 +1,11 @@
+[build-system]
+requires = ["setuptools"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "mininet-stubs"
+version = "0.1.0"
+description = "Mininet type stubs for IDE support"
+
+[tool.setuptools.packages.find]
+include = ["mininet*"]

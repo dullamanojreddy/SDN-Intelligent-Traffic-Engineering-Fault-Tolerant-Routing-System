@@ -1,0 +1,11 @@
+[build-system]
+requires = ["setuptools"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ryu-stubs"
+version = "0.1.0"
+description = "Ryu Framework type stubs for IDE support"
+
+[tool.setuptools.packages.find]
+include = ["ryu*"]
