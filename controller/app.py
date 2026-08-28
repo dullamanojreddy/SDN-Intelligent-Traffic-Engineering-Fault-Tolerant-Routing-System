@@ -1,19 +1,13 @@
 """
-SDN-ITE Ryu OpenFlow 1.3 Controller Application
+SDN-ITE OpenFlow 1.3 Controller Application & Engine
 """
 import sys
 import os
-from typing import Dict, List, Optional, Any
+import asyncio
+from typing import Dict, List, Optional, Tuple, Any
 
 # Ensure project root is in sys.path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
-
-from ryu.base import app_manager
-from ryu.controller import ofp_event
-from ryu.controller.handler import CONFIG_DISPATCHER, MAIN_DISPATCHER, set_ev_cls
-from ryu.ofproto import ofproto_v1_3
-from ryu.lib.packet import packet, ethernet, ipv4, arp
-from ryu.topology import event, switches
 
 from controller.topology.graph import NetworkGraph
 from controller.routing.dijkstra import DijkstraRouter
@@ -25,36 +19,171 @@ from controller.events.event_manager import EventManager
 from controller.config.settings import settings
 from controller.utils.logger import log
 
-class SDNTrafficEngineApp(app_manager.RyuApp):
-    OFP_VERSIONS = [ofproto_v1_3.OFP_VERSION]
-        
+from controller.openflow.protocol import (
+    OFP_VERSION,
+    OFPT_PORT_STATUS,
+    OFPPR_DELETE,
+    OFPPR_MODIFY,
+    parse_port_status,
+)
+from controller.openflow.switch_manager import SwitchManager, Datapath
+from controller.openflow.flow_manager import FlowManager
+from controller.openflow.packet_handler import PacketHandler
+from controller.openflow.stats_manager import StatsManager
+from controller.topology.discovery import TopologyDiscovery
+
+
+class SDNTrafficEngineApp:
+    """
+    Main Controller Application combining native OpenFlow 1.3 server runtime
+    with intelligent Multi-Metric Routing, Congestion Avoidance, and Fast Failover.
+    """
+    OFP_VERSIONS = [OFP_VERSION]
+
     def __init__(self, *args, **kwargs):
-        super(SDNTrafficEngineApp, self).__init__(*args, **kwargs)
+        # 1. Core SDN Intelligence Layer
         self.network_graph = NetworkGraph()
         self.router = DijkstraRouter(self.network_graph)
         self.optimizer = PathOptimizer(self.router)
-        self.congestion_detector = CongestionDetector()
+        self.congestion_detector = CongestionDetector(
+            threshold_pct=settings.utilization_threshold_pct,
+            persistence_cycles=settings.congestion_persistence_cycles,
+        )
         self.failure_detector = FailureDetector(self.network_graph)
         self.recovery_engine = RecoveryEngine(self.router)
         self.qos_engine = QoSEngine()
         self.event_manager = EventManager()
-        
-        self.datapaths: Dict[int, Any] = {}
-        self.active_flows: Dict[str, Any] = {}
-        
+
+        # 2. OpenFlow 1.3 Communication Subsystems
+        self.switch_manager = SwitchManager(
+            on_switch_connected=self._on_switch_connected,
+            on_switch_disconnected=self._on_switch_disconnected,
+            on_packet_in=self._on_packet_in,
+            on_port_stats_reply=self._on_port_stats_reply,
+            on_port_status=self._on_port_status,
+        )
+        self.flow_manager = FlowManager(self.switch_manager)
+        self.topology_discovery = TopologyDiscovery(
+            network_graph=self.network_graph,
+            switch_manager=self.switch_manager,
+            event_manager=self.event_manager,
+            probe_interval=3.0,
+        )
+        self.stats_manager = StatsManager(
+            switch_manager=self.switch_manager,
+            network_graph=self.network_graph,
+            congestion_detector=self.congestion_detector,
+            event_manager=self.event_manager,
+            on_congestion_alert=self._on_congestion_alert,
+            poll_interval=settings.monitor_interval,
+        )
+        self.packet_handler = PacketHandler(
+            switch_manager=self.switch_manager,
+            flow_manager=self.flow_manager,
+            network_graph=self.network_graph,
+            router=self.router,
+            topology_discovery=self.topology_discovery,
+            event_manager=self.event_manager,
+        )
+
+        # Datapath and Flow references
+        self.datapaths = self.switch_manager.datapaths
+        self.active_flows = self.flow_manager.active_flows
+
         log.info("=" * 60)
         log.info("SDN Intelligent Traffic Engineering Controller Initialized")
-        log.info(f"OpenFlow 1.3 | Monitor Interval: {settings.monitor_interval}s | Congestion Threshold: {settings.utilization_threshold_pct}%")
+        log.info(
+            f"OpenFlow 1.3 | Port: 6653 | Monitor Interval: {settings.monitor_interval}s | "
+            f"Congestion Threshold: {settings.utilization_threshold_pct}%"
+        )
         log.info("=" * 60)
 
+    # --------------------------------------------------------------------------
+    # Switch Event Handlers
+    # --------------------------------------------------------------------------
+    def _on_switch_connected(self, dp: Datapath):
+        """Called when an OpenFlow 1.3 switch finishes handshake."""
+        self.network_graph.add_switch(dp.sw_id)
+        log.info(f"Connected to Switch {dp.sw_id} ({dp.addr})")
+        if self.event_manager:
+            self.event_manager.emit(
+                "switch_connected", {"switch": dp.sw_id, "dpid": dp.dpid, "addr": str(dp.addr)}
+            )
+
+    def _on_switch_disconnected(self, dp: Datapath):
+        """Called when a switch disconnects."""
+        log.warning(f"Switch Disconnected: {dp.sw_id}")
+        if self.event_manager:
+            self.event_manager.emit(
+                "switch_disconnected", {"switch": dp.sw_id, "dpid": dp.dpid}
+            )
+
+    async def _on_packet_in(self, dp: Datapath, raw_data: bytes):
+        """Dispatches incoming Packet-In messages."""
+        await self.packet_handler.handle_packet_in(dp, raw_data)
+
+    def _on_port_stats_reply(self, dp: Datapath, raw_data: bytes):
+        """Dispatches port stats reply to StatsManager."""
+        self.stats_manager.handle_port_stats_reply(dp, raw_data)
+
+    def _on_port_status(self, dp: Datapath, raw_data: bytes):
+        """Handles OpenFlow Port Status change (link up/down)."""
+        status = parse_port_status(raw_data)
+        if not status:
+            return
+        
+        # Reason 1: OFPPR_DELETE, or state link down
+        is_down = (status.reason == OFPPR_DELETE) or (status.state & 1)  # OFPPS_LINK_DOWN = 1
+        if is_down:
+            log.error(f"🚨 PORT DOWN DETECTED: Switch {dp.sw_id} Port {status.port_no} ({status.name})")
+            events = self.failure_detector.handle_port_down(dp.sw_id, status.port_no)
+            for ev in events:
+                if self.event_manager:
+                    self.event_manager.emit("link_failure", ev.model_dump() if hasattr(ev, 'model_dump') else ev.__dict__)
+                # Trigger failover recalculation
+                self._trigger_failover_recovery(ev.data.get("link_id", ""))
+
+    def _on_congestion_alert(self, link_id: str, utilization: float):
+        """Triggered when sustained congestion is detected on a link."""
+        log.warning(f"⚡ Initiating dynamic rerouting away from congested link {link_id} ({utilization:.1f}%)")
+        # Find elephant flows and optimize paths
+        congested_flows = [
+            f for f in self.active_flows.values()
+        ]
+        if congested_flows:
+            new_routes = self.optimizer.optimize_congested_flows(
+                congested_flows, congested_link=link_id
+            )
+            for old_flow, new_path, new_cost in new_routes:
+                log.info(f"Rerouted Flow {old_flow} -> New Path: {' -> '.join(new_path)} (Cost: {new_cost:.4f})")
+
+    def _trigger_failover_recovery(self, failed_link_id: str):
+        """Recalculates paths for affected flows upon link failure."""
+        u, v = failed_link_id.split("-") if "-" in failed_link_id else ("", "")
+        if not u or not v:
+            return
+        
+        new_path, cost, recovery_time = self.recovery_engine.compute_failover_path(u, v, failed_link_id)
+        if new_path:
+            log.info(
+                f"✅ Sub-second Failover Route Computed: {' -> '.join(new_path)} "
+                f"(Cost: {cost:.4f}, Recovery Duration: {recovery_time:.2f}ms)"
+            )
+            if self.event_manager:
+                self.event_manager.emit(
+                    "failover_recovered",
+                    {"failed_link": failed_link_id, "new_path": new_path, "recovery_ms": recovery_time},
+                )
+
+    # --------------------------------------------------------------------------
+    # Topology Initialization & Startup
+    # --------------------------------------------------------------------------
     def initialize_mesh_topology(self):
         """Initializes the baseline target mesh topology for discovery and testing."""
-        # Switches: S1, S2, S3, S4, S5, S6, S7
         switches_list = ["s1", "s2", "s3", "s4", "s5", "s6", "s7"]
         for sw in switches_list:
             self.network_graph.add_switch(sw)
             
-        # Core links (Bidirectional)
         links = [
             ("s1", "s2", 1, 1, 100.0, 5.0),
             ("s1", "s3", 2, 1, 100.0, 5.0),
@@ -73,8 +202,34 @@ class SDNTrafficEngineApp(app_manager.RyuApp):
             
         log.info(f"Initialized mesh topology with {len(switches_list)} switches and {len(links)*2} directed links.")
 
+    async def run(self, host: str = "0.0.0.0", port: int = 6653):
+        """Runs the asynchronous OpenFlow 1.3 controller."""
+        # Initialize default baseline topology
+        self.initialize_mesh_topology()
+        
+        # Start TCP server
+        await self.switch_manager.start_server(host=host, port=port)
+        # Start LLDP Discovery loop
+        self.topology_discovery.start()
+        # Start Statistics Poller
+        self.stats_manager.start()
+
+        log.info(f"🚀 SDN-ITE Controller Engine is LIVE and ready for OpenFlow 1.3 switches on {host}:{port}")
+
+        try:
+            while True:
+                await asyncio.sleep(3600)
+        except (asyncio.CancelledError, KeyboardInterrupt):
+            log.info("Stopping SDN-ITE Controller Engine...")
+        finally:
+            self.topology_discovery.stop()
+            self.stats_manager.stop()
+            await self.switch_manager.stop_server()
+
+
 if __name__ == "__main__":
     app = SDNTrafficEngineApp()
-    app.initialize_mesh_topology()
-    path, cost = app.router.calculate_shortest_path("s1", "s7")
-    log.info(f"Default shortest path from S1 to S7: {path} (Cost: {cost:.4f})")
+    try:
+        asyncio.run(app.run(host="0.0.0.0", port=6653))
+    except KeyboardInterrupt:
+        log.info("Controller exited cleanly.")

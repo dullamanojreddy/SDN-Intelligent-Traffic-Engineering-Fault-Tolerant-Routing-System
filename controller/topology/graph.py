@@ -8,6 +8,7 @@ from controller.models.topology import LinkStatus
 class NetworkGraph:
     def __init__(self):
         self.graph = nx.DiGraph()
+        self.hosts: Dict[str, Dict[str, Any]] = {}
         
     def add_switch(self, dpid: str, **attrs):
         self.graph.add_node(dpid, node_type="switch", **attrs)
@@ -15,6 +16,16 @@ class NetworkGraph:
     def remove_switch(self, dpid: str):
         if self.graph.has_node(dpid):
             self.graph.remove_node(dpid)
+
+    def add_host(self, host_id: str, switch_dpid: str, port_no: int, ip: str, mac: str):
+        """Registers a discovered host node."""
+        self.hosts[host_id] = {
+            "host_id": host_id,
+            "switch": switch_dpid,
+            "port": port_no,
+            "ip": ip,
+            "mac": mac,
+        }
             
     def add_link(
         self,
@@ -75,6 +86,14 @@ class NetworkGraph:
                 edge["status"] = LinkStatus.MODERATE
             else:
                 edge["status"] = LinkStatus.NORMAL
+
+    def update_link_utilization(self, src_dpid: str, dst_dpid: str, utilization_pct: float):
+        self.update_link_metrics(src_dpid, dst_dpid, utilization_pct=utilization_pct)
+
+    def update_link_packet_loss(self, src_dpid: str, dst_dpid: str, loss_pct: float):
+        if self.graph.has_edge(src_dpid, dst_dpid):
+            curr_util = self.graph[src_dpid][dst_dpid].get("utilization_pct", 0.0)
+            self.update_link_metrics(src_dpid, dst_dpid, utilization_pct=curr_util, loss_pct=loss_pct)
 
     def get_active_graph(self) -> nx.DiGraph:
         """Returns a subgraph containing only active, operational links."""
