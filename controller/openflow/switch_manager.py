@@ -258,6 +258,11 @@ class SwitchManager:
                                 await res
                         except Exception as e:
                             log.error(f"[{dp.sw_id}] Error in port status handler: {e}")
+
+                elif hdr.msg_type == OFPT_ERROR:
+                    if len(payload) >= 4:
+                        err_type, err_code = struct.unpack("!HH", payload[:4])
+                        log.error(f"[{dp.sw_id}] ⚠️ OpenFlow Error from switch: type={err_type}, code={err_code}, data_len={len(payload)-4}")
                             
             except asyncio.IncompleteReadError:
                 break

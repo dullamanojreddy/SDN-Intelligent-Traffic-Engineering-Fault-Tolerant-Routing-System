@@ -149,8 +149,8 @@ def test_packet_in_arp_learning_and_ipv4_forwarding():
             )
             raw_arp = eth_hdr + arp_body
             
-            # Build Packet-In message
-            match_in_port = build_match(in_port=1)
+            # Build Packet-In message for S1 (Host 1 on Edge Port 3)
+            match_in_port = build_match(in_port=3)
             pin_hdr = struct.pack("!BBHI", OFP_VERSION, OFPT_PACKET_IN, 8 + 16 + len(match_in_port) + 2 + len(raw_arp), 50)
             pin_body = struct.pack("!IHBBQ", 0xffffffff, len(raw_arp), 0, 0, 0)
             
@@ -160,8 +160,9 @@ def test_packet_in_arp_learning_and_ipv4_forwarding():
             # Check host learning
             assert "10.0.0.1" in app.packet_handler.host_ip_table
             assert app.packet_handler.host_ip_table["10.0.0.1"][0] == "s1"
+            assert app.packet_handler.host_ip_table["10.0.0.1"][1] == 3
             
-            # 2. Host 7 on S7 sends ARP Packet-In
+            # 2. Host 7 on S7 sends ARP Packet-In (Host 7 on Edge Port 4)
             src_mac7 = b"\x00\x00\x00\x00\x00\x07"
             eth_hdr7 = dst_mac + src_mac7 + struct.pack("!H", ETH_TYPE_ARP)
             arp_body7 = struct.pack(
@@ -171,11 +172,14 @@ def test_packet_in_arp_learning_and_ipv4_forwarding():
                 b"\x00" * 6, str_to_ip("10.0.0.1"),
             )
             raw_arp7 = eth_hdr7 + arp_body7
+            match_in_port7 = build_match(in_port=4)
+            pin_hdr7 = struct.pack("!BBHI", OFP_VERSION, OFPT_PACKET_IN, 8 + 16 + len(match_in_port7) + 2 + len(raw_arp7), 51)
             dp7 = app.switch_manager.datapaths[7]
-            await app.packet_handler.handle_packet_in(dp7, pin_hdr + pin_body + match_in_port + b"\x00\x00" + raw_arp7)
+            await app.packet_handler.handle_packet_in(dp7, pin_hdr7 + pin_body + match_in_port7 + b"\x00\x00" + raw_arp7)
             
             assert "10.0.0.7" in app.packet_handler.host_ip_table
             assert app.packet_handler.host_ip_table["10.0.0.7"][0] == "s7"
+            assert app.packet_handler.host_ip_table["10.0.0.7"][1] == 4
             
             # 3. Host 1 sends IPv4 Packet-In towards Host 7
             ip_data = b"\x45\x00\x00\x54\x00\x01\x00\x00\x40\x01\x00\x00" + str_to_ip("10.0.0.1") + str_to_ip("10.0.0.7") + (b"\x00" * 64)

@@ -8,6 +8,11 @@ def setup_logger(name: str = "SDN_Controller", level: int = logging.INFO) -> log
     logger = logging.getLogger(name)
     if not logger.handlers:
         logger.setLevel(level)
+        try:
+            if hasattr(sys.stdout, "reconfigure"):
+                sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+        except Exception:
+            pass
         handler = logging.StreamHandler(sys.stdout)
         formatter = logging.Formatter(
             fmt="[%(asctime)s] [%(levelname)s] [%(name)s] %(message)s",

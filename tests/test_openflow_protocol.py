@@ -150,3 +150,14 @@ def test_arp_and_ipv4_parsing():
     assert arp.src_ip == "10.0.0.1"
     assert arp.dst_ip == "10.0.0.2"
     assert arp.opcode == 1
+
+
+def test_arp_match_building():
+    match_bytes = build_match(
+        eth_type=ETH_TYPE_ARP,
+        arp_op=1,
+        arp_spa="10.0.0.1",
+        arp_tpa="10.0.0.7",
+    )
+    assert len(match_bytes) % 8 == 0
+    assert len(match_bytes) > 4

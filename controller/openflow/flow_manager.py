@@ -91,7 +91,8 @@ class FlowManager:
         src_mac: Optional[str] = None,
         dst_mac: Optional[str] = None,
         priority: int = 100,
-        idle_timeout: int = 60,
+        idle_timeout: int = 300,
+        hard_timeout: int = 0,
     ) -> bool:
         """
         Installs multi-hop forwarding rules along a computed path for IPv4 and ARP traffic.
@@ -102,23 +103,23 @@ class FlowManager:
             if not dp:
                 continue
                 
-            # IPv4 Flow Rule
+            # IPv4 Flow Rule (destination-based matching for seamless multi-hop forwarding)
             match_ip = {
                 "eth_type": ETH_TYPE_IP,
                 "ipv4_dst": dst_ip,
             }
             ok1 = await self.install_flow(
-                dp, match_ip, out_port=out_p, priority=priority, idle_timeout=idle_timeout
+                dp, match_ip, out_port=out_p, priority=priority, idle_timeout=idle_timeout, hard_timeout=hard_timeout
             )
             
-            # ARP Flow Rule (for direct MAC resolution)
+            # ARP Flow Rule (for direct MAC / ARP resolution)
             if dst_mac:
                 match_arp = {
                     "eth_type": ETH_TYPE_ARP,
                     "eth_dst": dst_mac,
                 }
                 ok2 = await self.install_flow(
-                    dp, match_arp, out_port=out_p, priority=priority, idle_timeout=idle_timeout
+                    dp, match_arp, out_port=out_p, priority=priority, idle_timeout=idle_timeout, hard_timeout=hard_timeout
                 )
             else:
                 ok2 = True
@@ -128,3 +129,44 @@ class FlowManager:
                 
         log.info(f"Installed Path Flows along {' -> '.join(path)} for {src_ip} -> {dst_ip}")
         return all_success
+
+    async def install_bidirectional_path_forwarding(
+        self,
+        forward_path: List[str],
+        forward_hops: List[Tuple[str, int, int]],
+        reverse_path: List[str],
+        reverse_hops: List[Tuple[str, int, int]],
+        src_ip: str,
+        dst_ip: str,
+        src_mac: Optional[str] = None,
+        dst_mac: Optional[str] = None,
+        priority: int = 100,
+        idle_timeout: int = 300,
+        hard_timeout: int = 0,
+    ) -> bool:
+        """
+        Installs forward and return path forwarding rules simultaneously.
+        """
+        fwd_ok = await self.install_path_forwarding(
+            path=forward_path,
+            port_hops=forward_hops,
+            src_ip=src_ip,
+            dst_ip=dst_ip,
+            src_mac=src_mac,
+            dst_mac=dst_mac,
+            priority=priority,
+            idle_timeout=idle_timeout,
+            hard_timeout=hard_timeout,
+        )
+        rev_ok = await self.install_path_forwarding(
+            path=reverse_path,
+            port_hops=reverse_hops,
+            src_ip=dst_ip,
+            dst_ip=src_ip,
+            src_mac=dst_mac,
+            dst_mac=src_mac,
+            priority=priority,
+            idle_timeout=idle_timeout,
+            hard_timeout=hard_timeout,
+        )
+        return fwd_ok and rev_ok

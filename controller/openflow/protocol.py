@@ -271,6 +271,21 @@ def build_oxm_udp_dst(port: int) -> bytes:
     return struct.pack("!IH", hdr, port)
 
 
+def build_oxm_arp_op(op: int) -> bytes:
+    hdr = make_oxm_header(OFPXMC_OPENFLOW_BASIC, OFPXMT_OFB_ARP_OP, False, 2)
+    return struct.pack("!IH", hdr, op)
+
+
+def build_oxm_arp_spa(ip_bytes: bytes) -> bytes:
+    hdr = make_oxm_header(OFPXMC_OPENFLOW_BASIC, OFPXMT_OFB_ARP_SPA, False, 4)
+    return struct.pack("!I", hdr) + ip_bytes
+
+
+def build_oxm_arp_tpa(ip_bytes: bytes) -> bytes:
+    hdr = make_oxm_header(OFPXMC_OPENFLOW_BASIC, OFPXMT_OFB_ARP_TPA, False, 4)
+    return struct.pack("!I", hdr) + ip_bytes
+
+
 def build_match(
     in_port: Optional[int] = None,
     eth_src: Optional[str] = None,
@@ -283,6 +298,9 @@ def build_match(
     tcp_dst: Optional[int] = None,
     udp_src: Optional[int] = None,
     udp_dst: Optional[int] = None,
+    arp_op: Optional[int] = None,
+    arp_spa: Optional[str] = None,
+    arp_tpa: Optional[str] = None,
 ) -> bytes:
     """
     Constructs an OFPMatch structure (OFPMT_OXM = 1) with 8-byte alignment padding.
@@ -310,6 +328,12 @@ def build_match(
         oxm_fields.extend(build_oxm_udp_src(udp_src))
     if udp_dst is not None:
         oxm_fields.extend(build_oxm_udp_dst(udp_dst))
+    if arp_op is not None:
+        oxm_fields.extend(build_oxm_arp_op(arp_op))
+    if arp_spa:
+        oxm_fields.extend(build_oxm_arp_spa(str_to_ip(arp_spa)))
+    if arp_tpa:
+        oxm_fields.extend(build_oxm_arp_tpa(str_to_ip(arp_tpa)))
 
     oxm_len = len(oxm_fields)
     match_len = 4 + oxm_len
