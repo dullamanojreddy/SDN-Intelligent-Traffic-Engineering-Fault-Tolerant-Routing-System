@@ -253,19 +253,21 @@ class SDNTrafficEngineApp:
 
     async def _proactive_mesh_route_worker(self):
         """
-        Background worker that provisions proactive baseline OpenFlow routes
+        Background worker that provisions and maintains proactive baseline OpenFlow routes
         once mesh switches complete their OpenFlow 1.3 handshakes.
         """
-        try:
-            for _ in range(60):
-                await asyncio.sleep(0.5)
+        while True:
+            try:
+                await asyncio.sleep(2.0)
                 connected_switches = set(dp.sw_id for dp in self.switch_manager.datapaths.values())
                 if len(connected_switches) >= 7 or ("s1" in connected_switches and "s7" in connected_switches):
                     await self.packet_handler.install_proactive_mesh_routes()
                     log.info("[PROACTIVE ROUTE] Baseline OpenFlow forwarding rules successfully provisioned for all mesh switches.")
-                    break
-        except Exception as e:
-            log.warning(f"Proactive route worker notice: {e}")
+                    await asyncio.sleep(60.0)
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                log.warning(f"Proactive route worker notice: {e}")
 
     async def run(self, host: str = "0.0.0.0", port: int = 6653):
         """Runs the asynchronous OpenFlow 1.3 controller."""
