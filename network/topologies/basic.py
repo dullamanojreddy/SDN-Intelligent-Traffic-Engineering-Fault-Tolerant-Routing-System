@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""
+r"""
 Basic Redundant Diamond Mininet Topology
              S2
             /  \
-H1 ── S1 ─        ─ S4 ── H4
+H1 -- S1 -        - S4 -- H4
             \  /
              S3
 """

@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
-"""
+r"""
 Multi-Path Fault-Tolerant Mesh Mininet Topology
-                 S2 (100M) ─────── S5 (100M)
+                 S2 (100M) ------- S5 (100M)
                 /   \             /   \
                /     \           /     \
-H1, H2 ── S1 (100M)    S4 (100M)        S7 ── H7, H8
+H1, H2 -- S1 (100M)    S4 (100M)        S7 -- H7, H8
                \     /           \     /
                 \   /             \   /
-                 S3 (100M) ─────── S6 (100M)
+                 S3 (100M) ------- S6 (100M)
 """
 from mininet.topo import Topo
 from mininet.net import Mininet
