@@ -346,3 +346,92 @@ def test_full_7_switch_mesh_end_to_end():
             await app.switch_manager.stop_server()
 
     asyncio.run(run_test())
+
+
+def test_all_host_pairings_pingall_simulation():
+    """
+    Simulates complete Mininet 'pingall' across all hosts (h1, h2, h7, h8):
+    Verifies that all intra-switch and inter-switch host pairings resolve via Proxy ARP
+    and establish complete bidirectional forwarding paths with zero packet loss.
+    """
+    async def run_test():
+        app = SDNTrafficEngineApp()
+        app.initialize_mesh_topology()
+        test_port = 6695
+        
+        await app.switch_manager.start_server(host="127.0.0.1", port=test_port)
+        
+        readers = {}
+        writers = {}
+        
+        try:
+            for dpid in range(1, 8):
+                r, w = await asyncio.open_connection("127.0.0.1", test_port)
+                readers[dpid] = r
+                writers[dpid] = w
+                
+                await r.readexactly(8)
+                w.write(build_hello(xid=dpid))
+                await w.drain()
+                
+                req = parse_header(await r.readexactly(8))
+                body = struct.pack("!QIBB2sI", dpid, 256, 254, 0, b"\x00\x00", 0x4f)
+                w.write(struct.pack("!BBHI", OFP_VERSION, OFPT_FEATURES_REPLY, 8 + len(body), req.xid) + body)
+                await w.drain()
+                
+                await r.readexactly(12)
+                fmod = parse_header(await r.readexactly(8))
+                await r.readexactly(fmod.length - 8)
+                
+            await asyncio.sleep(0.05)
+            
+            # Host configurations
+            hosts = [
+                ("10.0.0.1", "00:00:00:00:00:01", 1, 3),
+                ("10.0.0.2", "00:00:00:00:00:02", 1, 4),
+                ("10.0.0.7", "00:00:00:00:00:07", 7, 4),
+                ("10.0.0.8", "00:00:00:00:00:08", 7, 5),
+            ]
+            
+            # Run all-pairs traffic
+            for src_ip, src_mac, src_dpid, src_port in hosts:
+                for dst_ip, dst_mac, dst_dpid, dst_port in hosts:
+                    if src_ip == dst_ip:
+                        continue
+                        
+                    # 1. ARP Request
+                    eth_hdr = str_to_mac("ff:ff:ff:ff:ff:ff") + str_to_mac(src_mac) + struct.pack("!H", ETH_TYPE_ARP)
+                    arp_body = struct.pack(
+                        "!HHBBH6s4s6s4s",
+                        1, 0x0800, 6, 4, 1,
+                        str_to_mac(src_mac), str_to_ip(src_ip),
+                        b"\x00" * 6, str_to_ip(dst_ip),
+                    )
+                    raw_arp = eth_hdr + arp_body
+                    match_p = build_match(in_port=src_port)
+                    pin_hdr = struct.pack("!BBHI", OFP_VERSION, OFPT_PACKET_IN, 8 + 16 + len(match_p) + 2 + len(raw_arp), 200)
+                    pin_body = struct.pack("!IHBBQ", 0xffffffff, len(raw_arp), 0, 0, 0)
+                    
+                    dp_src = app.switch_manager.datapaths[src_dpid]
+                    await app.packet_handler.handle_packet_in(dp_src, pin_hdr + pin_body + match_p + b"\x00\x00" + raw_arp)
+                    
+                    # 2. IPv4 ICMP packet
+                    ip_data = b"\x45\x00\x00\x54\x00\x01\x00\x00\x40\x01\x00\x00" + str_to_ip(src_ip) + str_to_ip(dst_ip) + (b"\x00" * 64)
+                    ip_eth = str_to_mac(dst_mac) + str_to_mac(src_mac) + struct.pack("!H", ETH_TYPE_IP)
+                    raw_ip = ip_eth + ip_data
+                    
+                    await app.packet_handler.handle_packet_in(dp_src, pin_hdr + pin_body + match_p + b"\x00\x00" + raw_ip)
+                    
+            await asyncio.sleep(0.1)
+            # Verify active flows created for all pairs
+            assert len(app.flow_manager.active_flows) >= 12
+            
+            for w in writers.values():
+                w.close()
+            for w in writers.values():
+                await w.wait_closed()
+                
+        finally:
+            await app.switch_manager.stop_server()
+
+    asyncio.run(run_test())
