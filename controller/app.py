@@ -251,6 +251,22 @@ class SDNTrafficEngineApp:
             
         log.info(f"Initialized mesh topology with {len(switches_list)} switches and {len(links)*2} directed links.")
 
+    async def _proactive_mesh_route_worker(self):
+        """
+        Background worker that provisions proactive baseline OpenFlow routes
+        once mesh switches complete their OpenFlow 1.3 handshakes.
+        """
+        try:
+            for _ in range(60):
+                await asyncio.sleep(0.5)
+                connected_switches = set(dp.sw_id for dp in self.switch_manager.datapaths.values())
+                if len(connected_switches) >= 7 or ("s1" in connected_switches and "s7" in connected_switches):
+                    await self.packet_handler.install_proactive_mesh_routes()
+                    log.info("[PROACTIVE ROUTE] Baseline OpenFlow forwarding rules successfully provisioned for all mesh switches.")
+                    break
+        except Exception as e:
+            log.warning(f"Proactive route worker notice: {e}")
+
     async def run(self, host: str = "0.0.0.0", port: int = 6653):
         """Runs the asynchronous OpenFlow 1.3 controller."""
         # Initialize default baseline topology
@@ -262,6 +278,8 @@ class SDNTrafficEngineApp:
         self.topology_discovery.start()
         # Start Statistics Poller
         self.stats_manager.start()
+        # Schedule proactive route provisioning worker
+        asyncio.create_task(self._proactive_mesh_route_worker())
 
         log.info(f"🚀 SDN-ITE Controller Engine is LIVE and ready for OpenFlow 1.3 switches on {host}:{port}")
 
