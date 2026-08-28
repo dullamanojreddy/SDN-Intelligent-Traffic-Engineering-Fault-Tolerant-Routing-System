@@ -38,9 +38,10 @@ class DijkstraRouter:
             return None, float("inf")
             
         try:
-            path = nx.dijkstra_path(G, source=src_dpid, target=dst_dpid, weight="weight")
-            cost = nx.dijkstra_path_length(G, source=src_dpid, target=dst_dpid, weight="weight")
-            return path, float(cost)
+            raw_path = nx.dijkstra_path(G, source=src_dpid, target=dst_dpid, weight="weight")
+            path: List[str] = [str(n) for n in raw_path]
+            cost: float = nx.dijkstra_path_length(G, source=src_dpid, target=dst_dpid, weight="weight")
+            return path, cost
         except nx.NetworkXNoPath:
             log.error(f"Dijkstra: No viable path from {src_dpid} to {dst_dpid}")
             return None, float("inf")
@@ -55,13 +56,14 @@ class DijkstraRouter:
         try:
             paths = list(nx.shortest_simple_paths(G, source=src_dpid, target=dst_dpid, weight="weight"))
             for p in paths[:k]:
+                path_nodes: List[str] = [str(n) for n in p]
                 # Calculate metrics for path
                 cost = 0.0
                 total_latency = 0.0
                 max_util = 0.0
                 total_loss = 0.0
-                for i in range(len(p) - 1):
-                    u, v = p[i], p[i+1]
+                for i in range(len(path_nodes) - 1):
+                    u, v = path_nodes[i], path_nodes[i+1]
                     edge = G[u][v]
                     cost += edge.get("weight", 0.0)
                     total_latency += edge.get("latency_ms", 5.0)
@@ -69,7 +71,7 @@ class DijkstraRouter:
                     total_loss += edge.get("loss_pct", 0.0)
                     
                 results.append({
-                    "path": p,
+                    "path": path_nodes,
                     "cost": round(cost, 4),
                     "latency_ms": round(total_latency, 2),
                     "max_utilization_pct": round(max_util, 2),
