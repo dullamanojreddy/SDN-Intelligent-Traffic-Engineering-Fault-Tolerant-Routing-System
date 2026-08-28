@@ -9,8 +9,28 @@
   - Fix: Start OVS daemon: `sudo service openvswitch-switch start`.
 - **Error: OpenFlow 1.3 Handshake Failure**
   - Fix: Ensure switches are configured with `protocols=OpenFlow13` (Mininet topology scripts in `network/topologies/` set this automatically).
+- **Issue: `pingall` failing / 100% Packet Loss / `X X` between hosts (Broadcast Storm)**
+  - **Root Cause**: In multi-path mesh topologies (e.g., $s1 \rightarrow s2 \rightarrow s4 \rightarrow s3 \rightarrow s1$), ARP broadcasts circle the network loop indefinitely without STP, overwhelming switch CPUs.
+  - **Option 1 (Recommended - Persistent Script Fix)**:
+    Ensure all switches are initialized with `stp=True`:
+    ```python
+    self.addSwitch('s1', dpid='0000000000000001', protocols='OpenFlow13', stp=True)
+    ```
+    *Important*: Wait ~30 seconds after launching Mininet for the STP listening/learning phase to converge before issuing `pingall`.
+  - **Option 2 (Emergency Mininet CLI Fix)**:
+    Run the following in the active Mininet prompt to enable STP on the fly:
+    ```bash
+    mininet> sh ovs-vsctl set bridge s1 stp_enable=true
+    mininet> sh ovs-vsctl set bridge s2 stp_enable=true
+    mininet> sh ovs-vsctl set bridge s3 stp_enable=true
+    mininet> sh ovs-vsctl set bridge s4 stp_enable=true
+    mininet> sh ovs-vsctl set bridge s5 stp_enable=true
+    mininet> sh ovs-vsctl set bridge s6 stp_enable=true
+    mininet> sh ovs-vsctl set bridge s7 stp_enable=true
+    ```
+    Wait 30 seconds, then run `pingall`.
 
-### Controller (Ryu)
+### Controller
 - **Error: `Address already in use (Port 6653 / 6633)`**
   - Fix: Terminate zombie controller processes: `sudo fuser -k 6653/tcp` or `sudo fuser -k 6633/tcp`.
 - **Error: Eventlet / Python 3.12 compatibility**

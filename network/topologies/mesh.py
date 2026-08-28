@@ -19,10 +19,19 @@ from mininet.log import setLogLevel, info
 class MultiPathMeshTopo(Topo):
     def build(self):
         # 7 Switches (S1 - S7)
+        # stp=True: Stops broadcast storm (loops)
+        # failMode='standalone': Allows switches to work seamlessly with or without controller
         switches = {}
         for i in range(1, 8):
             dpid = f"{i:016x}"
-            switches[f's{i}'] = self.addSwitch(f's{i}', dpid=dpid, protocols='OpenFlow13', stp=True)
+            switches[f's{i}'] = self.addSwitch(
+                f's{i}',
+                cls=OVSSwitch,
+                dpid=dpid,
+                protocols='OpenFlow13',
+                stp=True,
+                failMode='standalone'
+            )
 
         # Hosts
         h1 = self.addHost('h1', ip='10.0.0.1/24', mac='00:00:00:00:00:01')
@@ -64,6 +73,8 @@ def run():
     )
     net.start()
     info("*** Multi-Path Mesh Network Started with 7 Open vSwitches & OpenFlow 1.3\n")
+    info("*** Spanning Tree Protocol (STP) is ENABLED on switches s1-s7 to prevent broadcast storms.\n")
+    info("*** NOTE: Wait ~30 seconds for STP listening/learning convergence before running 'pingall'.\n")
     CLI(net)
     net.stop()
 

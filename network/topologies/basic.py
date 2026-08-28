@@ -16,11 +16,11 @@ from mininet.log import setLogLevel, info
 
 class BasicDiamondTopo(Topo):
     def build(self):
-        # Add Switches
-        s1 = self.addSwitch('s1', dpid='0000000000000001', protocols='OpenFlow13')
-        s2 = self.addSwitch('s2', dpid='0000000000000002', protocols='OpenFlow13')
-        s3 = self.addSwitch('s3', dpid='0000000000000003', protocols='OpenFlow13')
-        s4 = self.addSwitch('s4', dpid='0000000000000004', protocols='OpenFlow13')
+        # Add Switches with Spanning Tree Protocol (STP) enabled and standalone fallback
+        s1 = self.addSwitch('s1', cls=OVSSwitch, dpid='0000000000000001', protocols='OpenFlow13', stp=True, failMode='standalone')
+        s2 = self.addSwitch('s2', cls=OVSSwitch, dpid='0000000000000002', protocols='OpenFlow13', stp=True, failMode='standalone')
+        s3 = self.addSwitch('s3', cls=OVSSwitch, dpid='0000000000000003', protocols='OpenFlow13', stp=True, failMode='standalone')
+        s4 = self.addSwitch('s4', cls=OVSSwitch, dpid='0000000000000004', protocols='OpenFlow13', stp=True, failMode='standalone')
 
         # Add Hosts
         h1 = self.addHost('h1', ip='10.0.0.1/24', mac='00:00:00:00:00:01')
@@ -48,6 +48,8 @@ def run():
     )
     net.start()
     info("*** Basic Diamond Network Started with OpenFlow 1.3 Controller at 127.0.0.1:6653\n")
+    info("*** Spanning Tree Protocol (STP) is ENABLED on switches s1-s4 to prevent broadcast storms.\n")
+    info("*** NOTE: Wait ~30 seconds for STP convergence before running 'pingall'.\n")
     CLI(net)
     net.stop()
 
