@@ -241,37 +241,6 @@ The React web application provides an intuitive control interface:
 
 ---
 
-# ⚙️ Technology Stack
-
-<div align="center">
-
-### SDN & Data Plane
-![OpenFlow](https://img.shields.io/badge/OPENFLOW-1.3-00599C?style=for-the-badge&logo=opennetworking&logoColor=white)
-![Open vSwitch](https://img.shields.io/badge/OPEN_vSWITCH-OVS-1885D5?style=for-the-badge&logo=gnubash&logoColor=white)
-![Mininet](https://img.shields.io/badge/MININET-EMULATION-E95420?style=for-the-badge&logo=linux&logoColor=white)
-![NetworkX](https://img.shields.io/badge/NETWORKX-GRAPH_ROUTING-008080?style=for-the-badge&logo=scipy&logoColor=white)
-
-### Controller & Backend API
-![Python](https://img.shields.io/badge/PYTHON-3.10+-3776AB?style=for-the-badge&logo=python&logoColor=white)
-![FastAPI](https://img.shields.io/badge/FASTAPI-0.110-009688?style=for-the-badge&logo=fastapi&logoColor=white)
-![Uvicorn](https://img.shields.io/badge/UVICORN-ASYNCIO-499848?style=for-the-badge&logo=python&logoColor=white)
-![WebSockets](https://img.shields.io/badge/WEBSOCKETS-GATEWAY-010101?style=for-the-badge&logo=socketdotio&logoColor=white)
-![MongoDB](https://img.shields.io/badge/MONGODB-DATABASE-47A248?style=for-the-badge&logo=mongodb&logoColor=white)
-
-### Frontend Operations UI
-![React](https://img.shields.io/badge/REACT-18.2-61DAFB?style=for-the-badge&logo=react&logoColor=black)
-![TypeScript](https://img.shields.io/badge/TYPESCRIPT-5.X-3178C6?style=for-the-badge&logo=typescript&logoColor=white)
-![Vite](https://img.shields.io/badge/VITE-5.X-646CFF?style=for-the-badge&logo=vite&logoColor=white)
-![TailwindCSS](https://img.shields.io/badge/TAILWINDCSS-3.4-06B6D4?style=for-the-badge&logo=tailwindcss&logoColor=white)
-![Recharts](https://img.shields.io/badge/RECHARTS-TELEMETRY-22B5BF?style=for-the-badge&logo=d3dotjs&logoColor=white)
-
-### Testing & Validation
-![Pytest](https://img.shields.io/badge/PYTEST-36_TESTS_PASSING-0A9EDC?style=for-the-badge&logo=pytest&logoColor=white)
-
-</div>
-
----
-
 # 🚀 Getting Started & Installation
 
 ### Prerequisites
