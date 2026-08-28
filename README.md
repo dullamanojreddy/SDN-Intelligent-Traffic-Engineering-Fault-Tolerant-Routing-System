@@ -1,5 +1,10 @@
 # SDN Intelligent Traffic Engineering & Fault-Tolerant Routing System (SDN-ITE)
 
+[![Status](https://img.shields.io/badge/Status-Final_Draft_Complete-emerald.svg)](https://github.com/dullamanojreddy/SDN-Intelligent-Traffic-Engineering-Fault-Tolerant-Routing-System)
+[![OpenFlow](https://img.shields.io/badge/OpenFlow-1.3-blue.svg)](https://opennetworking.org)
+[![FastAPI](https://img.shields.io/badge/Backend-FastAPI_0.110-009688.svg)](https://fastapi.tiangolo.com)
+[![React](https://img.shields.io/badge/Frontend-React_18_Vite-61DAFB.svg)](https://react.dev)
+
 > An SDN-based intelligent traffic engineering platform that centrally monitors network topology and link conditions, computes optimized routes using network-performance metrics, installs forwarding rules through the SDN controller, detects congestion and failures, automatically reroutes affected traffic, and evaluates improvements using latency, throughput, packet loss, link utilization, and recovery-time metrics through a real-time visualization dashboard.
 
 ---
