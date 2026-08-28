@@ -1,0 +1,79 @@
+#!/usr/bin/env python3
+"""
+Multi-Path Fault-Tolerant Mesh Mininet Topology
+                 S2 (100M) ─────── S5 (100M)
+                /   \             /   \
+               /     \           /     \
+H1, H2 ── S1 (100M)    S4 (100M)        S7 ── H7, H8
+               \     /           \     /
+                \   /             \   /
+                 S3 (100M) ─────── S6 (100M)
+"""
+try:
+    from mininet.topo import Topo
+    from mininet.net import Mininet
+    from mininet.node import RemoteController, OVSSwitch
+    from mininet.link import TCLink
+    from mininet.cli import CLI
+    from mininet.log import setLogLevel, info
+    MININET_AVAILABLE = True
+except ImportError:
+    MININET_AVAILABLE = False
+    class Topo: pass
+
+class MultiPathMeshTopo(Topo):
+    def build(self):
+        # 7 Switches (S1 - S7)
+        switches = {}
+        for i in range(1, 8):
+            dpid = f"{i:016x}"
+            switches[f's{i}'] = self.addSwitch(f's{i}', dpid=dpid, protocols='OpenFlow13')
+
+        # Hosts
+        h1 = self.addHost('h1', ip='10.0.0.1/24', mac='00:00:00:00:00:01')
+        h2 = self.addHost('h2', ip='10.0.0.2/24', mac='00:00:00:00:00:02')
+        h7 = self.addHost('h7', ip='10.0.0.7/24', mac='00:00:00:00:00:07')
+        h8 = self.addHost('h8', ip='10.0.0.8/24', mac='00:00:00:00:00:08')
+
+        # Connect Hosts
+        self.addLink(h1, switches['s1'], port2=3)
+        self.addLink(h2, switches['s1'], port2=4)
+        self.addLink(h7, switches['s7'], port2=4)
+        self.addLink(h8, switches['s7'], port2=5)
+
+        # Switch Links with Bandwidth & Delay Attributes
+        # S1 connections
+        self.addLink(switches['s1'], switches['s2'], port1=1, port2=1, bw=100, delay='5ms')
+        self.addLink(switches['s1'], switches['s3'], port1=2, port2=1, bw=100, delay='5ms')
+
+        # Layer 1 to Layer 2
+        self.addLink(switches['s2'], switches['s4'], port1=2, port2=1, bw=100, delay='6ms')
+        self.addLink(switches['s2'], switches['s5'], port1=3, port2=1, bw=100, delay='5ms')
+        self.addLink(switches['s3'], switches['s4'], port1=2, port2=2, bw=100, delay='6ms')
+        self.addLink(switches['s3'], switches['s6'], port1=3, port2=1, bw=100, delay='5ms')
+
+        # Layer 2 to S7 (Egress)
+        self.addLink(switches['s4'], switches['s7'], port1=3, port2=1, bw=100, delay='5ms')
+        self.addLink(switches['s5'], switches['s7'], port1=2, port2=2, bw=100, delay='5ms')
+        self.addLink(switches['s6'], switches['s7'], port1=2, port2=3, bw=100, delay='5ms')
+
+def run():
+    if not MININET_AVAILABLE:
+        print("Mininet is required to run this topology script (Linux/WSL2).")
+        return
+    setLogLevel('info')
+    topo = MultiPathMeshTopo()
+    net = Mininet(
+        topo=topo,
+        switch=OVSSwitch,
+        controller=RemoteController('c0', ip='127.0.0.1', port=6653),
+        link=TCLink,
+        autoSetMacs=True
+    )
+    net.start()
+    info("*** Multi-Path Mesh Network Started with 7 Open vSwitches & OpenFlow 1.3\n")
+    CLI(net)
+    net.stop()
+
+if __name__ == '__main__':
+    run()
