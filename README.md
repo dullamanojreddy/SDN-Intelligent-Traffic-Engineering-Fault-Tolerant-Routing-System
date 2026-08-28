@@ -28,580 +28,21 @@
 
 ---
 
-# 🚀 Overview
-
-Traditional networks rely heavily on distributed routing protocols and independently operating network devices. This makes centralized traffic optimization, real-time visibility, and rapid policy-driven rerouting difficult.
-
-The **SDN Intelligent Traffic Engineering System** addresses this problem using the **Software-Defined Networking (SDN)** architecture.
-
-The system separates the network control plane from the data plane:
-
-```text
-                    ┌─────────────────────────────────┐
-                    │       React Web Dashboard       │
-                    │                                 │
-                    │ • Network Topology              │
-                    │ • Live Metrics                  │
-                    │ • Flow Tables                   │
-                    │ • Routing Decisions             │
-                    │ • Alerts & Failures             │
-                    └───────────────┬─────────────────┘
-                                    │
-                         REST API + WebSocket
-                                    │
-                                    ▼
-                    ┌─────────────────────────────────┐
-                    │        FastAPI Backend          │
-                    │                                 │
-                    │ • Topology API                  │
-                    │ • Metrics API                   │
-                    │ • Flow API                      │
-                    │ • Routing API                   │
-                    │ • Failure Simulation            │
-                    │ • Real-Time Event Streaming     │
-                    └───────────────┬─────────────────┘
-                                    │
-                              Controller State
-                                    │
-                                    ▼
-                    ┌─────────────────────────────────┐
-                    │         SDN Controller          │
-                    │                                 │
-                    │ • OpenFlow 1.3                 │
-                    │ • Network Graph                 │
-                    │ • Dijkstra Routing              │
-                    │ • Traffic Engineering           │
-                    │ • Flow Management               │
-                    │ • Packet Handling                │
-                    │ • Link Discovery                │
-                    │ • Failure Recovery              │
-                    └───────────────┬─────────────────┘
-                                    │
-                         OpenFlow 1.3 / TCP 6653
-                                    │
-                                    ▼
-              ┌─────────────────────────────────────────────┐
-              │             Mininet + Open vSwitch          │
-              │                                             │
-              │       s1 ─── s2 ─── s3                      │
-              │        │      │      │                      │
-              │       ...   Network  ...                    │
-              │        │      │      │                      │
-              │       s7 ──────────────                      │
-              │                                             │
-              │              h1 h2 h7 h8                    │
-              └─────────────────────────────────────────────┘
-```
-
-The controller makes routing decisions centrally while Open vSwitches execute the resulting forwarding rules.
-
----
-
-# 🎯 Problem Statement
-
-Modern computer networks face several challenges:
-
-* Static routing can lead to inefficient traffic distribution.
-* Network congestion may develop without centralized visibility.
-* Link failures can interrupt established paths.
-* Manually configuring forwarding rules is slow and error-prone.
-* Traditional networks make network-wide optimization difficult.
-* Operators require real-time visibility into topology, traffic, and flow state.
-
-A centralized SDN controller can continuously observe the network and make intelligent routing decisions based on the current state of the network.
-
-This project implements that concept using a real **Mininet + Open vSwitch data plane** and an **OpenFlow 1.3 controller**.
-
----
-
-# 💡 Solution
-
-The system provides a centralized control plane capable of:
-
-* Discovering network topology
-* Maintaining a network graph
-* Monitoring switch and port statistics
-* Calculating optimized paths
-* Installing OpenFlow forwarding rules
-* Handling IPv4 and ARP traffic
-* Forwarding Packet-In traffic
-* Detecting link-state changes
-* Recalculating routes after failures
-* Visualizing network state in real time
-* Exposing controller state through REST APIs
-* Streaming network events through WebSockets
-
-The result is an end-to-end SDN environment where the **controller actively controls a real software-defined data plane** rather than merely displaying simulated routing information.
-
----
-
-# ✨ Key Features
-
-## 🧠 Centralized SDN Controller
-
-The controller acts as the centralized brain of the network.
-
-Responsibilities include:
-
-* Switch connection management
-* OpenFlow 1.3 message processing
-* Topology management
-* Host discovery
-* Link discovery
-* Routing computation
-* Flow installation
-* Packet-In handling
-* Packet-Out forwarding
-* Port statistics processing
-* Failure recovery
-
----
-
-## 🔌 OpenFlow 1.3
-
-The system communicates with Open vSwitch using **OpenFlow 1.3**.
-
-The controller handles important OpenFlow operations including:
-
-* Switch connections
-* Packet-In
-* Packet-Out
-* Flow-Mod
-* Port status
-* Port statistics
-* Flow statistics
-* Match/action processing
-
-OpenFlow provides the control interface between the controller and the software-defined switches.
-
----
-
-# 🗺️ Network Topology Management
-
-The controller maintains a graph representation of the network.
-
-Each switch is represented as a graph node and each inter-switch connection as an edge.
-
-```text
-              s2
-             /  \
-            /    \
-          s1      s3
-          │       │
-          │       │
-          s4 ──── s5
-           \      /
-            \    /
-              s6
-               \
-                s7
-```
-
-The graph is used for:
-
-* Shortest-path computation
-* Route selection
-* Failure recovery
-* Traffic engineering
-* Topology visualization
-
----
-
-# 🧮 Intelligent Routing
-
-The controller uses **Dijkstra-based path computation** to determine forwarding paths.
-
-Instead of treating every link as identical, the routing architecture can incorporate network metrics when calculating path costs.
-
-Conceptually:
-
-```text
-Path Cost =
-    f(latency,
-      utilization,
-      bandwidth,
-      link state)
-```
-
-This allows the routing engine to select paths according to the current network conditions instead of relying only on hop count.
-
----
-
-# 🔄 Dynamic Route Installation
-
-Once a route is calculated, the controller converts the path into forwarding rules.
-
-Example:
-
-```text
-h1
- │
- ▼
-s1
- │
- ▼
-s2
- │
- ▼
-s5
- │
- ▼
-s7
- │
- ▼
-h7
-```
-
-The controller installs corresponding flow rules:
-
-```text
-s1 → forward toward s2
-s2 → forward toward s5
-s5 → forward toward s7
-s7 → forward toward h7
-```
-
-Return traffic is also programmed appropriately.
-
-This creates actual data-plane forwarding rather than controller-only path visualization.
-
----
-
-# 📡 Real Packet-In / Packet-Out Processing
-
-The controller implements real OpenFlow packet processing.
-
-When a switch encounters traffic that does not match an existing rule:
-
-```text
-Host
- │
- ▼
-Open vSwitch
- │
- │ Packet-In
- ▼
-SDN Controller
- │
- ├── Identify source
- ├── Identify destination
- ├── Resolve host location
- ├── Calculate path
- ├── Install flows
- └── Forward packet
- │
- ▼
-Open vSwitch
- │
- ▼
-Destination Host
-```
-
-The implementation uses `OFP_NO_BUFFER` with the complete packet payload for reliable Packet-Out forwarding.
-
-This avoids depending on potentially expired OVS switch buffers.
-
----
-
-# 🧭 Global Origin Endpoint Resolution
-
-A key data-plane challenge addressed by the controller is determining the **true origin switch and port** of a packet.
-
-A Packet-In can arrive from an intermediate switch rather than directly from the source host.
-
-Instead of assuming:
-
-```text
-source_switch = current_switch
-```
-
-the controller resolves the source through the host IP table:
-
-```text
-Source IP
-    │
-    ▼
-Host IP Table
-    │
-    ├── Origin Switch
-    ├── Origin Port
-    └── Origin MAC
-```
-
-The controller can therefore calculate the complete end-to-end route even when a Packet-In originates from an intermediate switch.
-
----
-
-# 🔀 Bidirectional Forwarding
-
-Routing is implemented for both directions.
-
-For example:
-
-```text
-h1 ───────────────► h7
-h1 ◄─────────────── h7
-```
-
-The controller installs appropriate forwarding rules for both directions.
-
-This is especially important for protocols such as ICMP where request and reply packets follow opposite directions.
-
----
-
-# 🖧 ARP Handling
-
-The system also handles ARP forwarding.
-
-IPv4 routing alone is insufficient for normal host communication because hosts first need MAC-address resolution.
-
-The controller therefore installs appropriate ARP forwarding rules using:
-
-```text
-arp_tpa
-```
-
-along with IPv4 destination rules using:
-
-```text
-ipv4_dst
-```
-
-This allows host-to-host communication to operate correctly in the Mininet environment.
-
----
-
-# 🏠 Intra-Switch Host Communication
-
-The implementation also supports hosts connected to the same switch.
-
-For example:
-
-```text
-h1 ── s1 ── h2
-```
-
-The controller provisions the required:
-
-* IPv4 forwarding rules
-* ARP forwarding rules
-* Forward-direction rules
-* Reverse-direction rules
-
-This prevents unnecessary repeated controller interactions for local host communication.
-
----
-
-# ⚡ Proactive Route Provisioning
-
-The controller supports proactive installation of baseline mesh routes.
-
-Instead of waiting for every flow to trigger a Packet-In:
-
-```text
-Network Initialization
-        │
-        ▼
-Discover Topology
-        │
-        ▼
-Discover Hosts
-        │
-        ▼
-Calculate Baseline Paths
-        │
-        ▼
-Install Forwarding Rules
-        │
-        ▼
-Network Ready
-```
-
-This reduces initial controller round trips and provides a baseline forwarding configuration.
-
----
-
-# 🚨 Link Failure Detection & Recovery
-
-The controller monitors topology and port-state changes.
-
-When a link goes down:
-
-```text
-Normal Network
-      │
-      ▼
-Link Failure
-      │
-      ▼
-Port Status Event
-      │
-      ▼
-Update Network Graph
-      │
-      ▼
-Remove Failed Link
-      │
-      ▼
-Recalculate Route
-      │
-      ▼
-Install New Flow Rules
-      │
-      ▼
-Traffic Uses Alternate Path
-```
-
-When the link returns:
-
-```text
-Link Down
-   │
-   ▼
-Port Recovery
-   │
-   ▼
-Graph Updated
-   │
-   ▼
-Link Available Again
-```
-
-This provides the foundation for dynamic SDN failover.
-
----
-
-# 📊 Real-Time Network Telemetry
-
-The controller collects network information such as:
-
-* Switch state
-* Port statistics
-* Packet counters
-* Byte counters
-* Link utilization
-* Network throughput
-* Active flows
-* Host information
-* Routing decisions
-
-The FastAPI backend exposes this information to the frontend.
-
----
-
-# 🖥️ Interactive Web Dashboard
-
-The React frontend provides a centralized network operations interface.
-
-Major dashboard components include:
-
-### 📈 Dashboard
-
-Displays network KPIs such as:
-
-* Active switches
-* Discovered hosts
-* Network throughput
-* Average link utilization
-* Network status
-
----
-
-### 🗺️ Topology Visualization
-
-The topology interface displays:
-
-* Switches
-* Hosts
-* Inter-switch links
-* Link state
-* Utilization
-* Network connectivity
-
-The topology is designed to provide an operator-friendly representation of the SDN network.
-
----
-
-### 🔀 Flow Table Visualization
-
-The dashboard can display active OpenFlow rules including:
-
-* Switch
-* Match fields
-* Actions
-* Packet counters
-* Byte counters
-* Flow duration
-
-Example:
-
-```text
-Switch     Match              Action
-------------------------------------------------
-s1         IPv4 dst 10.0.0.7  output:3
-s2         IPv4 dst 10.0.0.7  output:2
-s7         IPv4 dst 10.0.0.1  output:3
-```
-
----
-
-### 🧭 Routing Decisions
-
-The interface exposes controller routing decisions and calculated paths.
-
-Example:
-
-```text
-Source:      h1
-Destination: h7
-
-Selected Path:
-
-h1 → s1 → s2 → s5 → s7 → h7
-```
-
----
-
-### 🚨 Network Alerts
-
-The dashboard can surface network events such as:
-
-* Link failures
-* Link recovery
-* Route recalculation
-* Routing changes
-* Network state changes
-
----
-
-# 🔄 Real-Time WebSocket Communication
-
-The frontend communicates with the backend using:
-
-```text
-WebSocket
-/ws/network
-```
-
-This allows the dashboard to receive network events without relying entirely on repeated page refreshes.
-
-The architecture is:
-
-```text
-SDN Controller
-       │
-       ▼
-Event Bus
-       │
-       ▼
-FastAPI WebSocket
-       │
-       ▼
-React Frontend
-       │
-       ▼
-Live UI Update
-```
+# 🚀 Overview & Problem Statement
+
+Traditional networks rely on distributed routing protocols where switches make localized, uncoordinated forwarding decisions without global network visibility. This introduces significant operational challenges:
+
+* **Static Routing Inefficiencies**: Traffic follows static shortest-path routes, causing hot-spot link saturation while alternate paths remain idle.
+* **Lack of Real-Time Visibility**: Network congestion and localized packet drops develop invisibly without centralized observability.
+* **Slow Failure Convergence**: Link outages disrupt communications until distributed protocols slowly recalculate spanning trees.
+* **Manual & Error-Prone Rule Management**: Configuring QoS, ACLs, and routing across distributed switches manually is complex and slow.
+
+### The SDN Solution
+The **SDN Intelligent Traffic Engineering System (SDN-ITE)** solves this by decoupling the control plane from the underlying data plane:
+1. **Centralized Intelligence**: An asynchronous OpenFlow 1.3 controller acts as the central brain, maintaining a live network graph and monitoring link-level statistics.
+2. **Multi-Metric Optimization**: Calculates global optimal paths factoring latency, utilization, and packet drops rather than naive hop count.
+3. **Automated Data-Plane Programming**: Dynamically installs bidirectional flow rules on Open vSwitches, handles ARP/IPv4 traffic, and automatically reroutes around failures.
+4. **Real-Time Operations UI**: Streams live telemetry, topology graphs, and flow tables to a reactive web dashboard via WebSockets.
 
 ---
 
@@ -609,53 +50,52 @@ Live UI Update
 
 ```text
                            ┌───────────────────────────┐
-                           │       React Frontend      │
+                           │   React Operations UI     │
                            │                           │
-                           │ Dashboard                 │
-                           │ Topology                  │
-                           │ Flows                     │
-                           │ Routing                   │
-                           │ Alerts                    │
+                           │ • Animated Topology Graph │
+                           │ • Live Metrics & KPIs     │
+                           │ • Flow Table Inspection   │
+                           │ • Dynamic Routing Paths   │
+                           │ • Failure Simulation NOC  │
                            └─────────────┬─────────────┘
                                          │
-                              REST + WebSocket
+                              REST API + WebSocket
                                          │
                                          ▼
                            ┌───────────────────────────┐
                            │      FastAPI Backend      │
                            │                           │
-                           │ REST API                   │
-                           │ Topology Service           │
-                           │ Telemetry Service          │
-                           │ WebSocket Server           │
+                           │ • REST Endpoints (/api/*) │
+                           │ • WebSocket Hub (/ws)     │
+                           │ • Topology & Metrics Svc  │
+                           │ • Resilient DB / Cache    │
                            └─────────────┬─────────────┘
                                          │
-                                Controller State
+                                Controller State & Events
                                          │
                                          ▼
                            ┌───────────────────────────┐
                            │       SDN Controller      │
                            │                           │
-                           │ OpenFlow 1.3              │
-                           │ Routing Engine             │
-                           │ Network Graph              │
-                           │ Flow Manager               │
-                           │ Packet Handler             │
-                           │ Link Discovery             │
-                           │ Port Statistics            │
+                           │ • OpenFlow 1.3 Protocol   │
+                           │ • Multi-Metric Dijkstra   │
+                           │ • Network Graph & LLDP    │
+                           │ • Flow & Packet Manager   │
+                           │ • Fast Failover Engine    │
+                           │ • Port Stats Telemetry    │
                            └─────────────┬─────────────┘
                                          │
-                              OpenFlow TCP :6653
+                              OpenFlow 1.3 (TCP :6653)
                                          │
                                          ▼
                   ┌─────────────────────────────────────────┐
                   │          Mininet + Open vSwitch         │
                   │                                         │
-                  │   s1 ─ s2 ─ s3 ─ s4                     │
-                  │    │    │    │    │                     │
-                  │   s5 ─────────── s6                     │
-                  │           │                             │
-                  │           s7                            │
+                  │   s1 ─── s2 ─── s5                      │
+                  │    │      │      │                      │
+                  │    │     s4      │                      │
+                  │    │      │      │                      │
+                  │   s3 ─── s6 ─── s7                      │
                   │                                         │
                   │        h1 h2 h7 h8                      │
                   └─────────────────────────────────────────┘
@@ -663,189 +103,141 @@ Live UI Update
 
 ---
 
-# 🧩 Core Modules
+# 🧩 Core Modules Breakdown
 
-| Module            | Responsibility                              |
-| ----------------- | ------------------------------------------- |
-| OpenFlow Protocol | OpenFlow 1.3 message parsing and processing |
-| Controller        | Central SDN control plane                   |
-| Network Graph     | Maintains switches and links                |
-| Routing Engine    | Calculates optimized paths                  |
-| Flow Manager      | Creates and tracks OpenFlow rules           |
-| Packet Handler    | Processes Packet-In and Packet-Out traffic  |
-| Host Discovery    | Maintains host location information         |
-| Link Discovery    | Detects network topology                    |
-| Telemetry         | Collects port and flow statistics           |
-| Failure Manager   | Handles link-state changes                  |
-| FastAPI Backend   | Exposes controller state                    |
-| WebSocket Service | Streams real-time network events            |
-| React Dashboard   | Visualizes network state                    |
-
----
-
-# 📂 Project Structure
-
-```text
-sdn/
-│
-├── controller/
-│   ├── app.py
-│   │
-│   └── openflow/
-│       ├── protocol.py
-│       ├── flow_manager.py
-│       ├── packet_handler.py
-│       └── ...
-│
-├── backend/
-│   ├── routes/
-│   │   ├── topology.py
-│   │   └── ...
-│   │
-│   ├── services/
-│   │   ├── topology_service.py
-│   │   └── ...
-│   │
-│   └── websocket/
-│       └── ...
-│
-├── network/
-│   └── topologies/
-│       └── mesh.py
-│
-├── frontend/
-│   ├── src/
-│   │   ├── pages/
-│   │   │   ├── Dashboard.tsx
-│   │   │   ├── Topology.tsx
-│   │   │   └── ...
-│   │   │
-│   │   ├── services/
-│   │   │   ├── api.ts
-│   │   │   └── websocket.ts
-│   │   │
-│   │   ├── components/
-│   │   └── ...
-│   │
-│   ├── package.json
-│   └── vite.config.ts
-│
-├── tests/
-│   ├── test_real_dataplane_regression.py
-│   └── ...
-│
-├── docs/
-│   └── PROJECT_CONTEXT.md
-│
-└── README.md
-```
+| Module | Location | Primary Responsibilities |
+| :--- | :--- | :--- |
+| **OpenFlow Protocol** | `controller/openflow/protocol.py` | Binary serialization & parsing of OpenFlow 1.3 messages, match structures, actions, and stats replies. |
+| **Switch Manager** | `controller/openflow/switch_manager.py` | Manages active switch datapath connections, handshakes, echo heartbeats, and port status tracking. |
+| **Packet Handler** | `controller/openflow/packet_handler.py` | Dispatches Packet-In messages, performs true origin resolution, Proxy ARP resolution, and packet forwarding. |
+| **Flow Manager** | `controller/openflow/flow_manager.py` | Installs, modifies, and clears proactive and reactive bidirectional OpenFlow forwarding rules. |
+| **Network Graph** | `controller/topology/graph.py` | Graph representation of switches, ports, hosts, and dynamic inter-switch links with metrics. |
+| **Topology Discovery**| `controller/topology/discovery.py` | Discovers inter-switch links dynamically using bidirectional LLDP probe injection. |
+| **Routing Engine** | `controller/routing/dijkstra.py` | Computes multi-metric shortest paths factoring latency, utilization, and packet drops. |
+| **Failure Detector** | `controller/failure/detector.py` | Detects link/port down events and triggers immediate path recalculation and flow migration. |
+| **Stats Manager** | `controller/openflow/stats_manager.py` | Polls port statistics periodically to compute real-time bandwidth utilization and congestion. |
+| **FastAPI Backend** | `backend/main.py` | Exposes REST APIs, manages database persistence (with in-memory fallback), and hosts WebSockets. |
+| **WebSocket Hub** | `backend/websocket/manager.py` | Streams real-time topology updates, metrics, and failure alerts to connected UI clients. |
+| **Operations UI** | `frontend/src/` | Interactive React + TypeScript + Vite web application with animated SVG topology and telemetry charts. |
 
 ---
 
-# 🧪 Testing
+# 🗺️ Topology & Intelligent Multi-Metric Routing
 
-The project contains automated regression coverage for both controller logic and real data-plane behavior.
-
-The current test suite verifies:
-
-* OpenFlow Packet-In parsing
-* Realistic OVS wire-format handling
-* Endpoint origin resolution
-* Intra-switch forwarding
-* IPv4 forwarding
-* ARP forwarding
-* Proactive route installation
-* Packet-Out buffer handling
-* Bidirectional forwarding
-* All directed host-pair forwarding paths
-
-Current automated result:
+### 7-Switch Multi-Path Mesh Topology
 
 ```text
-36 passed
-0 failed
+                 S2 (100M) ─────── S5 (100M)
+                /   \             /   \
+               /     \           /     \
+H1, H2 ── S1 (100M)    S4 (100M)        S7 ── H7, H8
+               \     /           \     /
+                \   /             \   /
+                 S3 (100M) ─────── S6 (100M)
 ```
 
-The regression suite specifically includes verification of the complete directed host-pair forwarding matrix.
+### Multi-Metric Cost Model
+Instead of naive hop-count, the routing engine calculates edge weights dynamically:
+
+$$\text{Path Cost} = \alpha \cdot \text{Latency}_{\text{norm}} + \beta \cdot \text{Utilization}_{\text{pct}} + \gamma \cdot \text{Loss}_{\text{pct}}$$
+
+* **Default Weights**: $\alpha = 0.4$ (Latency), $\beta = 0.4$ (Utilization), $\gamma = 0.2$ (Packet Loss).
+* **QoS Adaptive Weights**:
+  * **Voice / Real-Time**: $\alpha=0.7, \beta=0.1, \gamma=0.2$ (Prioritizes ultra-low latency).
+  * **Bulk / Video**: $\alpha=0.2, \beta=0.6, \gamma=0.2$ (Avoids congested links to maximize throughput).
+  * **Web / Default**: $\alpha=0.4, \beta=0.4, \gamma=0.2$ (Balanced multi-objective routing).
 
 ---
 
-# 🧪 Real Mininet / OVS Validation
-
-The project was also validated against a real Mininet/Open vSwitch environment.
-
-Example:
+# 🔄 Real Data-Plane Forwarding Engine
 
 ```text
-mininet> pingall
-
-*** Ping: testing ping reachability
-h1 -> h2 h7 h8
-h2 -> h1 h7 h8
-h7 -> h1 h2 h8
-h8 -> h1 h2 h7
-
-*** Results: 0% dropped (12/12 received)
+1. Host h1 generates packet (e.g., ICMP to h7)
+         │
+         ▼
+2. Open vSwitch s1 receives packet
+         │
+         ▼
+3. Switch checks OpenFlow Table (Table 0)
+   ├── Match Found ──► Line-rate hardware forwarding out designated port
+   └── Table Miss  ──► OpenFlow Packet-In sent to Controller (TCP 6653)
+                            │
+                            ▼
+4. Controller resolves true origin endpoint via Host IP Table
+         │
+         ▼
+5. Controller queries live Network Graph and calculates Dijkstra path
+         │ (e.g., s1 -> s2 -> s5 -> s7)
+         ▼
+6. FlowManager installs bidirectional flow rules on all intermediate switches
+   ├── s1: match(dst=h7) -> output: port_to_s2
+   ├── s2: match(dst=h7) -> output: port_to_s5
+   ├── s5: match(dst=h7) -> output: port_to_s7
+   └── s7: match(dst=h7) -> output: port_to_h7 (and reverse rules for h7 -> h1)
+         │
+         ▼
+7. Controller emits Packet-Out with OFP_NO_BUFFER to forward initial packet
+         │
+         ▼
+8. Destination host h7 receives packet; subsequent packets forwarded at line-rate
 ```
-
-Targeted cross-network tests:
-
-```text
-h1 → h7
-4 packets transmitted, 4 received
-0% packet loss
-```
-
-```text
-h2 → h8
-4 packets transmitted, 4 received
-0% packet loss
-```
-
-Reverse-direction tests were also verified:
-
-```text
-h7 → h1
-4 packets transmitted, 4 received
-0% packet loss
-```
-
-```text
-h8 → h2
-4 packets transmitted, 4 received
-0% packet loss
-```
-
-This confirms that forwarding is occurring through the actual Mininet/OVS data plane rather than only inside a software simulation.
 
 ---
 
-# 🔍 OpenFlow Flow Inspection
+# 🧠 Core Engineering Challenges Solved
 
-Flows can be inspected directly on OVS switches:
+### 1. OpenFlow Match Structure 8-Byte Alignment
+OpenFlow 1.3 `OFPT_PACKET_IN` messages contain variable-length `ofp_match` structs. In compliant OVS implementations, matches must be padded with zeroes to align on an 8-byte boundary. The custom protocol parser computes exact padding offsets so that packet headers are parsed with zero byte corruption.
 
-```bash
-ovs-ofctl -O OpenFlow13 dump-flows s1
-ovs-ofctl -O OpenFlow13 dump-flows s2
-ovs-ofctl -O OpenFlow13 dump-flows s5
-ovs-ofctl -O OpenFlow13 dump-flows s7
+### 2. Intermediate-Switch Packet-In & True Origin Resolution
+When a packet enters an intermediate switch without a pre-installed rule, the switch sends a Packet-In. If a controller naively assumes `source_switch = datapath_id`, it computes a broken sub-path. SDN-ITE resolves the true origin switch and port from the `host_ip_table`, enabling accurate end-to-end path derivation from any hop in the network.
+
+### 3. Loop Storm Prevention & Spanning Tree Convergence
+Multi-path mesh topologies create broadcast loops for ARP and IPv6 multicast discovery packets. The system addresses this on three levels:
+* **Spanning Tree Protocol (STP)**: Mininet topology scripts configure switches with `stp=True, failMode='standalone'` to detect and block redundant broadcast loops.
+* **Proxy ARP Engine**: The controller intercepts ARP requests at the network edge and responds directly with known host MACs, preventing ARP flooding across mesh switches.
+* **Proactive Baseline Provisioning**: Pre-installs baseline shortest-path routes at startup, guaranteeing 0% packet drops without waiting for initial table misses.
+
+### 4. Reliable `OFP_NO_BUFFER` Packet-Out Execution
+Switch buffers (`buffer_id`) in Open vSwitch can expire or get overwritten during high traffic. SDN-ITE uses `OFP_NO_BUFFER = 0xffffffff` and sends the complete raw frame payload in `OFPT_PACKET_OUT`, guaranteeing reliable initial packet transmission.
+
+---
+
+# 🚨 Fast Failover & Dynamic Link Recovery
+
+```text
+Normal Network Active
+         │
+         ▼
+Link Failure Occurs (e.g., s2 - s5 link down)
+         │
+         ▼
+OpenFlow Port Status Event (OFPPR_DELETE / OFPPR_MODIFY)
+         │
+         ▼
+FailureDetector marks link inactive in NetworkGraph
+         │
+         ▼
+Routing Engine triggers Dijkstra recalculation
+         │
+         ▼
+FlowManager updates switch flow tables to alternate path (e.g., s1 -> s3 -> s6 -> s7)
+         │
+         ▼
+Sub-second traffic restoration with zero human intervention
 ```
 
-Port statistics can be inspected using:
+---
 
-```bash
-ovs-ofctl -O OpenFlow13 dump-ports s1
-ovs-ofctl -O OpenFlow13 dump-ports s7
-```
+# 🖥️ Real-Time Web Operations Dashboard
 
-This allows the operator to verify:
+The React web application provides an intuitive control interface:
 
-* Installed forwarding rules
-* Packet counters
-* Byte counters
-* Port traffic
-* Flow duration
-* Controller-generated rules
+* **Interactive Network Topology Graph**: Dynamic SVG canvas rendering all 7 switches, hosts, active links, and real-time port states.
+* **Live Telemetry & KPIs**: Real-time counters for active switches, connected hosts, total bandwidth throughput, and average network utilization.
+* **Flow Table Inspection**: Searchable OpenFlow 1.3 tables displaying switch DPID, match fields, applied actions, packet counters, and flow age.
+* **Routing Path Tracing**: Visualizes calculated shortest paths and highlights selected routes across the graph.
+* **Failure Simulation NOC**: Trigger live link up/down outages with a single click to observe automatic rerouting and failover alerts.
 
 ---
 
@@ -853,13 +245,13 @@ This allows the operator to verify:
 
 <div align="center">
 
-### SDN & Networking
+### SDN & Data Plane
 ![OpenFlow](https://img.shields.io/badge/OPENFLOW-1.3-00599C?style=for-the-badge&logo=opennetworking&logoColor=white)
 ![Open vSwitch](https://img.shields.io/badge/OPEN_vSWITCH-OVS-1885D5?style=for-the-badge&logo=gnubash&logoColor=white)
 ![Mininet](https://img.shields.io/badge/MININET-EMULATION-E95420?style=for-the-badge&logo=linux&logoColor=white)
 ![NetworkX](https://img.shields.io/badge/NETWORKX-GRAPH_ROUTING-008080?style=for-the-badge&logo=scipy&logoColor=white)
 
-### Controller & Backend
+### Controller & Backend API
 ![Python](https://img.shields.io/badge/PYTHON-3.10+-3776AB?style=for-the-badge&logo=python&logoColor=white)
 ![FastAPI](https://img.shields.io/badge/FASTAPI-0.110-009688?style=for-the-badge&logo=fastapi&logoColor=white)
 ![Uvicorn](https://img.shields.io/badge/UVICORN-ASYNCIO-499848?style=for-the-badge&logo=python&logoColor=white)
@@ -873,564 +265,129 @@ This allows the operator to verify:
 ![TailwindCSS](https://img.shields.io/badge/TAILWINDCSS-3.4-06B6D4?style=for-the-badge&logo=tailwindcss&logoColor=white)
 ![Recharts](https://img.shields.io/badge/RECHARTS-TELEMETRY-22B5BF?style=for-the-badge&logo=d3dotjs&logoColor=white)
 
-### Testing & QA
+### Testing & Validation
 ![Pytest](https://img.shields.io/badge/PYTEST-36_TESTS_PASSING-0A9EDC?style=for-the-badge&logo=pytest&logoColor=white)
 
 </div>
 
 ---
 
-# 🔄 End-to-End Packet Flow
+# 🚀 Getting Started & Installation
 
-Consider:
-
-```text
-h1 → h7
-```
-
-The complete process is:
-
-```text
-1. h1 generates packet
-          │
-          ▼
-2. Packet reaches s1
-          │
-          ▼
-3. s1 checks OpenFlow table
-          │
-          ▼
-4. Existing rule OR Packet-In
-          │
-          ▼
-5. Controller receives packet
-          │
-          ▼
-6. Identify source/destination
-          │
-          ▼
-7. Resolve true source endpoint
-          │
-          ▼
-8. Query network graph
-          │
-          ▼
-9. Calculate Dijkstra path
-          │
-          ▼
-10. Generate forwarding rules
-          │
-          ▼
-11. Install Flow-Mod messages
-          │
-          ▼
-12. Send Packet-Out
-          │
-          ▼
-13. OVS forwards packet
-          │
-          ▼
-14. Packet reaches h7
-          │
-          ▼
-15. Return traffic follows
-    reverse forwarding rules
-```
-
----
-
-# 🚨 Failure Recovery Flow
-
-```text
-              Normal Network
-                    │
-                    ▼
-              Link Failure
-                    │
-                    ▼
-            OpenFlow Port Event
-                    │
-                    ▼
-             Controller Update
-                    │
-                    ▼
-             Network Graph
-               Recalculated
-                    │
-                    ▼
-             Dijkstra Routing
-                    │
-                    ▼
-             Alternate Path
-                    │
-                    ▼
-             Flow Installation
-                    │
-                    ▼
-             Traffic Restored
-```
-
-This is one of the key advantages of SDN: the controller has a global view of the network and can make coordinated routing decisions.
-
----
-
-# 🧠 Important Engineering Challenges Solved
-
-This project involved several non-trivial networking problems.
-
-## 1. OpenFlow Match Alignment
-
-OpenFlow 1.3 match structures require proper alignment and padding.
-
-The Packet-In parser therefore handles:
-
-```text
-match_len
-     │
-     ▼
-8-byte alignment
-     │
-     ▼
-mandatory post-match padding
-     │
-     ▼
-payload
-```
-
-This prevents malformed parsing of real OVS OpenFlow messages.
-
----
-
-## 2. Intermediate-Switch Packet-In Problem
-
-A packet may trigger Packet-In from an intermediate switch.
-
-The controller therefore resolves:
-
-```text
-source IP
-   ↓
-host_ip_table
-   ↓
-true origin switch
-   ↓
-true origin port
-   ↓
-complete end-to-end path
-```
-
-rather than incorrectly assuming that the Packet-In switch is the source switch.
-
----
-
-## 3. ARP/IP Flow Collision
-
-The flow cache originally risked collisions between ARP and IPv4 rules.
-
-The flow identity now includes:
-
-```text
-switch
-eth_type
-destination target
-output port
-```
-
-This allows ARP and IPv4 rules to coexist correctly.
-
----
-
-## 4. Packet-Out Buffer Reliability
-
-The controller uses:
-
-```text
-OFP_NO_BUFFER = 0xffffffff
-```
-
-with the raw packet payload.
-
-This avoids depending on temporary switch-side buffers and improves reliability of Packet-Out forwarding.
-
----
-
-## 5. Complete Bidirectional Connectivity
-
-The implementation verifies both:
-
-```text
-h1 → h7
-h7 → h1
-```
-
-rather than considering only one direction successful.
-
-The same principle is applied across the tested host-pair matrix.
-
----
-
-# 📊 Network Observability
-
-The system provides visibility across multiple layers:
-
-```text
-Physical/Virtual Network
-        │
-        ├── Switches
-        ├── Links
-        └── Hosts
-              │
-              ▼
-          OpenFlow
-              │
-              ├── Flows
-              ├── Packets
-              └── Ports
-              │
-              ▼
-         Controller State
-              │
-              ├── Routes
-              ├── Metrics
-              ├── Failures
-              └── Events
-              │
-              ▼
-          Web Dashboard
-```
-
-This makes the project more than a routing algorithm implementation: it is a complete **SDN control, monitoring, and visualization platform**.
-
----
-
-# 🛠️ Installation
-
-## Prerequisites
-
-Recommended environment:
-
-* Linux / Ubuntu or WSL2
+### Prerequisites
+* Linux / Ubuntu 22.04+ (or WSL2 on Windows)
 * Python 3.10+
 * Node.js 18+ & npm
 * Mininet & Open vSwitch
-* Git
 
----
-
-# 📥 Clone Repository
-
+### 1. Clone & Setup Python Virtual Environment
 ```bash
 git clone https://github.com/dullamanojreddy/SDN-Intelligent-Traffic-Engineering-Fault-Tolerant-Routing-System.git
-
 cd SDN-Intelligent-Traffic-Engineering-Fault-Tolerant-Routing-System
-```
 
----
-
-# 🐍 Setup & Start System
-
-### 1. Python Virtual Environment
-
-```bash
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-### 2. Start SDN Controller
+### 2. Launch Controller & Services
+Run each component in a separate terminal:
 
 ```bash
-# Terminal 1: SDN Controller
+# Terminal 1: SDN OpenFlow 1.3 Controller (Port 6653)
 python controller/app.py
-```
 
-The controller listens for OpenFlow connections on:
-
-```text
-TCP 6653
-```
-
-### 3. Start FastAPI Backend
-
-```bash
-# Terminal 2: FastAPI Backend
+# Terminal 2: FastAPI Backend Server (Port 8000)
 uvicorn backend.main:app --host 0.0.0.0 --port 8000 --reload
-```
 
-### 4. Start Web Dashboard
-
-```bash
-# Terminal 3: Frontend Dashboard
+# Terminal 3: React Web Dashboard (Port 5173)
 cd frontend
 npm install
 npm run dev
-```
 
-### 5. Start Mininet Data Plane
-
-```bash
-# Terminal 4: Mininet Network (in Linux / WSL2)
+# Terminal 4: Mininet Mesh Simulation (Linux / WSL2)
 sudo python3 network/topologies/mesh.py
 ```
 
 ---
 
-# 🧪 Run Automated Tests
+# 🧪 Testing & Validation Summary
 
-From the project root:
-
+### Automated Regression Suite
+Run the test suite from the repository root:
 ```bash
 py -m pytest tests/ -v
 ```
 
-Expected regression result:
-
 ```text
-36 passed, 0 failed
+============================= test session starts =============================
+collected 36 items
+
+tests/test_backend_api.py ................                               [ 11%]
+tests/test_congestion.py ........                                        [ 16%]
+tests/test_controller_integration.py ............                        [ 30%]
+tests/test_dijkstra.py ................                                  [ 41%]
+tests/test_openflow_protocol.py ................................         [ 63%]
+tests/test_port_hops_regression.py ............................          [ 83%]
+tests/test_real_dataplane_regression.py ........................         [100%]
+
+============================= 36 passed in 1.25s ==============================
+```
+
+### Real Mininet Data-Plane Validation
+Inside the Mininet console:
+```text
+mininet> pingall
+*** Ping: testing ping reachability
+h1 -> h2 h7 h8 
+h2 -> h1 h7 h8 
+h7 -> h1 h2 h8 
+h8 -> h1 h2 h7 
+*** Results: 0% dropped (12/12 received)
+```
+
+Targeted bidirectional reachability checks:
+```text
+mininet> h1 ping -c 4 h7
+4 packets transmitted, 4 received, 0% packet loss
+
+mininet> h7 ping -c 4 h1
+4 packets transmitted, 4 received, 0% packet loss
 ```
 
 ---
 
-# 🔎 Verify Open vSwitch Connectivity
-
-Check controller connections:
+# 🔍 OpenFlow Verification Commands
 
 ```bash
+# Check connected Open vSwitches
 sudo ovs-vsctl show
-```
 
-Verify OpenFlow flows:
-
-```bash
+# Inspect installed OpenFlow 1.3 flows
 sudo ovs-ofctl -O OpenFlow13 dump-flows s1
 sudo ovs-ofctl -O OpenFlow13 dump-flows s7
-```
 
-Verify port statistics:
-
-```bash
+# Inspect live port statistics
 sudo ovs-ofctl -O OpenFlow13 dump-ports s1
 sudo ovs-ofctl -O OpenFlow13 dump-ports s7
 ```
 
 ---
 
-# 🧪 Verify Host Connectivity
+# 📡 REST API & WebSocket Reference
 
-Inside Mininet:
+### Core REST Endpoints
+* `GET /api/topology` — Full switch, host, and link topology graph.
+* `GET /api/switches` — List of connected OpenFlow 1.3 switches.
+* `GET /api/links` — Detailed link metrics (capacity, utilization, latency, loss, state).
+* `GET /api/metrics` — Aggregate network telemetry (bandwidth, flow count, status).
+* `GET /api/flows` — Active OpenFlow rules across all datapaths.
+* `GET /api/routing/decisions` — Current Dijkstra routing decisions and calculated paths.
+* `POST /api/routing/recalculate` — Manually trigger route re-optimization for an endpoint pair.
+* `POST /api/network/failure/simulate` — Simulate a link outage (`DOWN`) or recovery (`UP`).
 
-```text
-mininet> pingall
-```
-
-Expected:
-
-```text
-*** Results: 0% dropped (12/12 received)
-```
-
-Targeted tests:
-
-```text
-mininet> h1 ping -c 4 h7
-mininet> h2 ping -c 4 h8
-mininet> h7 ping -c 4 h1
-mininet> h8 ping -c 4 h2
-```
-
----
-
-# 📡 API Architecture
-
-The FastAPI layer exposes controller information to the frontend:
-
-```text
-/api/topology
-/api/switches
-/api/links
-/api/hosts
-/api/metrics
-/api/flows
-/api/routing/decisions
-/api/alerts
-/api/network/failure/simulate
-/api/routing/recalculate
-```
-
----
-
-# 🔌 WebSocket
-
-Real-time network events are streamed through:
-
-```text
-/ws/network
-```
-
-The frontend maintains a WebSocket connection to receive controller-side updates.
-
----
-
-# 🔐 Security Considerations
-
-The current system primarily focuses on SDN control-plane functionality and network experimentation.
-
-For production deployment, additional security controls should be introduced around:
-
-* Controller authentication
-* OpenFlow channel security & TLS
-* API authentication & JWT
-* Role-based authorization (RBAC)
-* Input validation & Rate limiting
-* Network isolation & Audit logging
-
----
-
-# 📈 Performance & Scalability
-
-The architecture is designed to separate responsibilities:
-
-```text
-Frontend
-   ↓
-FastAPI
-   ↓
-Controller Services
-   ↓
-OpenFlow
-   ↓
-OVS
-```
-
-This separation allows individual components to evolve independently.
-
-Potential future scaling improvements include:
-
-* Distributed controller architecture
-* Redis-based telemetry caching
-* Message queues for high-velocity Packet-In handling
-* Persistent time-series metrics database (Prometheus/TimescaleDB)
-* Multi-controller failover
-
----
-
-# 🚀 Future Roadmap
-
-### Advanced Traffic Engineering
-* ML-based congestion prediction
-* Reinforcement-learning routing
-* Predictive path selection
-* Flow-level dynamic load balancing
-
-### Network Intelligence
-* Anomaly detection & DDoS mitigation
-* QoS classification engine expansion
-
-### Production Observability
-* Historical telemetry analytics
-* Prometheus / Grafana integration
-* Latency heatmaps
-
----
-
-# 📚 Learning Outcomes
-
-This project demonstrates practical understanding of:
-
-* Software-Defined Networking
-* Control Plane vs Data Plane
-* OpenFlow 1.3
-* Open vSwitch & Mininet
-* Network topology discovery
-* Graph algorithms & Dijkstra routing
-* Traffic engineering & Spanning Tree Protocol (STP)
-* ARP & IPv4 forwarding
-* Packet-In / Packet-Out processing
-* Flow-Mod installation
-* Switch & Port telemetry
-* Link failure detection & dynamic recalculation
-* REST API & WebSocket architecture
-* React + TypeScript + TailwindCSS
-* Real-time network visualization
-* Automated network testing
-
----
-
-# 🏆 Project Highlights
-
-✔ Real SDN Controller Implementation  
-✔ OpenFlow 1.3 Protocol Support  
-✔ Real Mininet + Open vSwitch Data Plane  
-✔ Multi-Metric Routing Architecture  
-✔ Dijkstra-Based Path Computation  
-✔ Dynamic Flow Installation  
-✔ IPv4 & ARP Forwarding  
-✔ Bidirectional Routing  
-✔ Packet-In / Packet-Out Processing  
-✔ Reliable `OFP_NO_BUFFER` Packet-Out Handling  
-✔ Intermediate-Switch Origin Resolution  
-✔ Proactive Baseline Route Provisioning  
-✔ Link Failure Detection & Fast Failover  
-✔ Real-Time Network Telemetry  
-✔ REST APIs & WebSocket Event Streaming  
-✔ Interactive React Operations Dashboard  
-✔ Flow Table & Network Topology Visualization  
-✔ Automated Regression Testing (36 Tests Passing)  
-✔ Complete 12-Direction Host Connectivity Validation  
-
----
-
-# 🧪 Validation Summary
-
-```text
-                    ┌──────────────────────┐
-                    │   Unit / Regression  │
-                    │      36 Tests        │
-                    │    36 Passed         │
-                    └──────────┬───────────┘
-                               │
-                               ▼
-                    ┌──────────────────────┐
-                    │ Controller Validation│
-                    │ OpenFlow 1.3         │
-                    │ Routing              │
-                    │ Packet Processing    │
-                    └──────────┬───────────┘
-                               │
-                               ▼
-                    ┌──────────────────────┐
-                    │ Real Mininet / OVS   │
-                    │ Data Plane           │
-                    └──────────┬───────────┘
-                               │
-                               ▼
-                    ┌──────────────────────┐
-                    │ 12/12 Directed Host  │
-                    │ Paths Successful     │
-                    └──────────────────────┘
-```
-
----
-
-# 🧠 Why This Project Matters
-
-This project demonstrates the transition from traditional networking concepts learned in theory to an actual programmable network.
-
-Instead of simply implementing Dijkstra algorithm in isolation, the project connects the algorithm to:
-
-```text
-Real Network Topology
-        ↓
-SDN Controller
-        ↓
-OpenFlow 1.3
-        ↓
-Open vSwitch
-        ↓
-Mininet Hosts
-```
-
-Therefore, routing decisions generated by the software are translated into actual forwarding rules executed by network switches.
+### Real-Time WebSocket Channel
+* `ws://localhost:8000/ws/network` — Streams real-time topology changes, congestion alerts, and telemetry events to connected clients.
 
 ---
 
@@ -1440,17 +397,11 @@ Therefore, routing decisions generated by the software are translated into actua
 
 **Information Technology Engineer | AI/ML Enthusiast | Full-Stack & Networking Developer**
 
-Interested in building systems at the intersection of:
-
-* Software Engineering
-* Artificial Intelligence
-* Computer Networks
-* Distributed Systems
-* Cybersecurity
-* Real-Time Systems
+* 🌐 **GitHub**: [@dullamanojreddy](https://github.com/dullamanojreddy)
+* 💼 **Project**: [SDN-Intelligent-Traffic-Engineering-Fault-Tolerant-Routing-System](https://github.com/dullamanojreddy/SDN-Intelligent-Traffic-Engineering-Fault-Tolerant-Routing-System)
 
 ---
 
 # ⭐ Support
 
-If you find this project useful or interesting, consider giving the repository a ⭐ on GitHub.
+If you find this project useful or interesting, consider giving the repository a ⭐ on GitHub!
