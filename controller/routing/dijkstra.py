@@ -1,7 +1,7 @@
 """
 Dijkstra Routing Engine & Path Computation
 """
-import networkx as nx
+import networkx as nx  # type: ignore
 from typing import List, Dict, Optional, Tuple, Any
 from controller.topology.graph import NetworkGraph
 from controller.routing.cost_function import CostCalculator

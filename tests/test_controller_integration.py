@@ -111,11 +111,13 @@ def test_packet_in_arp_learning_and_ipv4_forwarding():
             w1.write(build_hello(xid=1))
             await w1.drain()
             req1 = parse_header(await r1.readexactly(8))
+            assert req1 is not None
             body1 = struct.pack("!QIBB2sI", 1, 256, 254, 0, b"\x00\x00", 0x4f)
             w1.write(struct.pack("!BBHI", OFP_VERSION, OFPT_FEATURES_REPLY, 8 + len(body1), req1.xid) + body1)
             await w1.drain()
             await r1.readexactly(12)  # SET_CONFIG
             fmod1 = parse_header(await r1.readexactly(8))
+            assert fmod1 is not None
             await r1.readexactly(fmod1.length - 8)  # Table miss
             
             # Connect switch S7
@@ -124,11 +126,13 @@ def test_packet_in_arp_learning_and_ipv4_forwarding():
             w7.write(build_hello(xid=1))
             await w7.drain()
             req7 = parse_header(await r7.readexactly(8))
+            assert req7 is not None
             body7 = struct.pack("!QIBB2sI", 7, 256, 254, 0, b"\x00\x00", 0x4f)
             w7.write(struct.pack("!BBHI", OFP_VERSION, OFPT_FEATURES_REPLY, 8 + len(body7), req7.xid) + body7)
             await w7.drain()
             await r7.readexactly(12)
             fmod7 = parse_header(await r7.readexactly(8))
+            assert fmod7 is not None
             await r7.readexactly(fmod7.length - 8)
             
             await asyncio.sleep(0.05)

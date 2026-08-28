@@ -1,7 +1,7 @@
 """
 Network Graph abstraction using NetworkX
 """
-import networkx as nx
+import networkx as nx  # type: ignore
 from typing import Dict, List, Optional, Tuple, Any
 from controller.models.topology import LinkStatus
 
