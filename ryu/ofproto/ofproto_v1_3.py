@@ -1,0 +1,20 @@
+"""
+OpenFlow 1.3 Definitions Stub
+"""
+OFP_VERSION = 0x04
+
+OFP_NO_BUFFER = 0xffffffff
+OFPP_CONTROLLER = 0xfffffffd
+OFPP_FLOOD = 0xfffffffb
+OFPP_ALL = 0xfffffffc
+OFPP_ANY = 0xffffffff
+
+OFPFC_ADD = 0
+OFPFC_MODIFY = 1
+OFPFC_MODIFY_STRICT = 2
+OFPFC_DELETE = 3
+OFPFC_DELETE_STRICT = 4
+
+OFPPR_ADD = 0
+OFPPR_DELETE = 1
+OFPPR_MODIFY = 2

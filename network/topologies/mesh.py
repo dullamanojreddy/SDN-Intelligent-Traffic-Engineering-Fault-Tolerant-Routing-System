@@ -9,48 +9,12 @@ H1, H2 ── S1 (100M)    S4 (100M)        S7 ── H7, H8
                 \   /             \   /
                  S3 (100M) ─────── S6 (100M)
 """
-import importlib
-
-def _load_mininet():
-    try:
-        _topo = importlib.import_module("mininet.topo")
-        _net = importlib.import_module("mininet.net")
-        _node = importlib.import_module("mininet.node")
-        _link = importlib.import_module("mininet.link")
-        _cli = importlib.import_module("mininet.cli")
-        _log = importlib.import_module("mininet.log")
-        return (
-            True,
-            _topo.Topo,
-            _net.Mininet,
-            _node.RemoteController,
-            _node.OVSSwitch,
-            _link.TCLink,
-            _cli.CLI,
-            _log.setLogLevel,
-            _log.info
-        )
-    except Exception:
-        class DummyTopo:
-            def addSwitch(self, *args, **kwargs):
-                return args[0] if args else "s"
-            def addHost(self, *args, **kwargs):
-                return args[0] if args else "h"
-            def addLink(self, *args, **kwargs):
-                pass
-        return False, DummyTopo, None, None, None, None, None, None, None
-
-(
-    MININET_AVAILABLE,
-    Topo,
-    Mininet,
-    RemoteController,
-    OVSSwitch,
-    TCLink,
-    CLI,
-    setLogLevel,
-    info
-) = _load_mininet()
+from mininet.topo import Topo
+from mininet.net import Mininet
+from mininet.node import RemoteController, OVSSwitch
+from mininet.link import TCLink
+from mininet.cli import CLI
+from mininet.log import setLogLevel, info
 
 class MultiPathMeshTopo(Topo):
     def build(self):
@@ -89,9 +53,6 @@ class MultiPathMeshTopo(Topo):
         self.addLink(switches['s6'], switches['s7'], port1=2, port2=3, bw=100, delay='5ms')
 
 def run():
-    if not MININET_AVAILABLE or Mininet is None:
-        print("Mininet is required to run this topology script (Linux/WSL2).")
-        return
     setLogLevel('info')
     topo = MultiPathMeshTopo()
     net = Mininet(

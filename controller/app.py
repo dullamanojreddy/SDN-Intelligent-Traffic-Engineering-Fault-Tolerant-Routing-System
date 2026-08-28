@@ -3,48 +3,17 @@ SDN-ITE Ryu OpenFlow 1.3 Controller Application
 """
 import sys
 import os
-import importlib
 from typing import Dict, List, Optional, Any
 
 # Ensure project root is in sys.path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-# Dynamic Ryu loader to prevent static linter missing-import errors on environments without native Ryu
-def _load_ryu():
-    try:
-        _app_mgr = importlib.import_module("ryu.base.app_manager")
-        _ofp_event = importlib.import_module("ryu.controller.ofp_event")
-        _handler = importlib.import_module("ryu.controller.handler")
-        _ofp_v13 = importlib.import_module("ryu.ofproto.ofproto_v1_3")
-        _packet = importlib.import_module("ryu.lib.packet")
-        _topo = importlib.import_module("ryu.topology")
-        return (
-            True,
-            _app_mgr.RyuApp,
-            _ofp_v13.OFP_VERSION,
-            _handler.set_ev_cls,
-            _handler.CONFIG_DISPATCHER,
-            _handler.MAIN_DISPATCHER
-        )
-    except Exception:
-        class DummyRyuApp:
-            OFP_VERSIONS: List[int] = []
-            def __init__(self, *args, **kwargs):
-                pass
-        def dummy_set_ev_cls(*args, **kwargs):
-            def decorator(f):
-                return f
-            return decorator
-        return False, DummyRyuApp, None, dummy_set_ev_cls, None, None
-
-(
-    RYU_AVAILABLE,
-    RyuBaseApp,
-    OFP_V13_VERSION,
-    set_ev_cls,
-    CONFIG_DISPATCHER,
-    MAIN_DISPATCHER
-) = _load_ryu()
+from ryu.base import app_manager
+from ryu.controller import ofp_event
+from ryu.controller.handler import CONFIG_DISPATCHER, MAIN_DISPATCHER, set_ev_cls
+from ryu.ofproto import ofproto_v1_3
+from ryu.lib.packet import packet, ethernet, ipv4, arp
+from ryu.topology import event, switches
 
 from controller.topology.graph import NetworkGraph
 from controller.routing.dijkstra import DijkstraRouter
@@ -56,9 +25,8 @@ from controller.events.event_manager import EventManager
 from controller.config.settings import settings
 from controller.utils.logger import log
 
-class SDNTrafficEngineApp(RyuBaseApp):
-    if RYU_AVAILABLE and OFP_V13_VERSION is not None:
-        OFP_VERSIONS = [OFP_V13_VERSION]
+class SDNTrafficEngineApp(app_manager.RyuApp):
+    OFP_VERSIONS = [ofproto_v1_3.OFP_VERSION]
         
     def __init__(self, *args, **kwargs):
         super(SDNTrafficEngineApp, self).__init__(*args, **kwargs)
@@ -82,8 +50,8 @@ class SDNTrafficEngineApp(RyuBaseApp):
     def initialize_mesh_topology(self):
         """Initializes the baseline target mesh topology for discovery and testing."""
         # Switches: S1, S2, S3, S4, S5, S6, S7
-        switches = ["s1", "s2", "s3", "s4", "s5", "s6", "s7"]
-        for sw in switches:
+        switches_list = ["s1", "s2", "s3", "s4", "s5", "s6", "s7"]
+        for sw in switches_list:
             self.network_graph.add_switch(sw)
             
         # Core links (Bidirectional)
@@ -103,7 +71,7 @@ class SDNTrafficEngineApp(RyuBaseApp):
             self.network_graph.add_link(u, v, p1, p2, capacity_mbps=cap, latency_ms=lat)
             self.network_graph.add_link(v, u, p2, p1, capacity_mbps=cap, latency_ms=lat)
             
-        log.info(f"Initialized mesh topology with {len(switches)} switches and {len(links)*2} directed links.")
+        log.info(f"Initialized mesh topology with {len(switches_list)} switches and {len(links)*2} directed links.")
 
 if __name__ == "__main__":
     app = SDNTrafficEngineApp()
