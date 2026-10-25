@@ -10,9 +10,7 @@ import { Topology } from './pages/Topology';
 import { Traffic } from './pages/Traffic';
 import { Flows } from './pages/Flows';
 import { Routing } from './pages/Routing';
-import { Alerts } from './pages/Alerts';
 import { Experiments } from './pages/Experiments';
-import { Settings } from './pages/Settings';
 import { api } from './services/api';
 import { wsClient } from './services/websocket';
 import { SystemStatus } from './types/network';
@@ -28,6 +26,8 @@ export const App: React.FC = () => {
 
     // Connect WebSocket
     wsClient.connect();
+
+    return () => wsClient.disconnect();
   }, []);
 
   return (
@@ -43,9 +43,7 @@ export const App: React.FC = () => {
               <Route path="/traffic" element={<Traffic />} />
               <Route path="/flows" element={<Flows />} />
               <Route path="/routing" element={<Routing />} />
-              <Route path="/alerts" element={<Alerts />} />
               <Route path="/experiments" element={<Experiments />} />
-              <Route path="/settings" element={<Settings />} />
             </Routes>
           </main>
         </div>

@@ -3,7 +3,10 @@ type MessageCallback = (data: any) => void;
 class WebSocketClient {
   private ws: WebSocket | null = null;
   private listeners: MessageCallback[] = [];
-  private reconnectInterval = 3000;
+  private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  private reconnectDelay = 3000;
+  private manuallyClosed = false;
+  private connecting = false;
   private url: string;
 
   constructor() {
@@ -12,14 +15,36 @@ class WebSocketClient {
   }
 
   public connect() {
+    this.manuallyClosed = false;
+    if (
+      this.manuallyClosed ||
+      this.connecting ||
+      (this.ws && (
+        this.ws.readyState === WebSocket.OPEN ||
+        this.ws.readyState === WebSocket.CONNECTING
+      ))
+    ) {
+      return;
+    }
+
+    this.connecting = true;
     try {
-      this.ws = new WebSocket(this.url);
+      const socket = new WebSocket(this.url);
+      this.ws = socket;
       
-      this.ws.onopen = () => {
+      socket.onopen = () => {
+        if (this.ws !== socket) {
+          return;
+        }
+        this.connecting = false;
+        this.reconnectDelay = 3000;
         console.log('[WebSocket] Connected to SDN controller gateway.');
       };
 
-      this.ws.onmessage = (event) => {
+      socket.onmessage = (event) => {
+        if (this.ws !== socket) {
+          return;
+        }
         try {
           const payload = JSON.parse(event.data);
           this.listeners.forEach((callback) => callback(payload));
@@ -28,18 +53,46 @@ class WebSocketClient {
         }
       };
 
-      this.ws.onclose = () => {
-        console.warn('[WebSocket] Connection closed. Attempting reconnect...');
-        setTimeout(() => this.connect(), this.reconnectInterval);
+      socket.onclose = () => {
+        if (this.ws !== socket) {
+          return;
+        }
+        this.connecting = false;
+        this.ws = null;
+        if (!this.manuallyClosed && !this.reconnectTimer) {
+          this.reconnectTimer = setTimeout(() => {
+            this.reconnectTimer = null;
+            this.connect();
+            this.reconnectDelay = Math.min(this.reconnectDelay * 2, 30000);
+          }, this.reconnectDelay);
+        }
       };
 
-      this.ws.onerror = (err) => {
-        console.error('[WebSocket] Connection error:', err);
-        this.ws?.close();
+      socket.onerror = () => {
+        if (this.ws !== socket) {
+          return;
+        }
+        this.connecting = false;
+        if (!this.manuallyClosed) {
+          console.warn('[WebSocket] Backend WebSocket unavailable; retrying.');
+        }
       };
     } catch (err) {
+      this.connecting = false;
       console.error('[WebSocket] Setup exception:', err);
     }
+  }
+
+  public disconnect() {
+    this.manuallyClosed = true;
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
+    const socket = this.ws;
+    this.ws = null;
+    this.connecting = false;
+    socket?.close();
   }
 
   public subscribe(callback: MessageCallback) {

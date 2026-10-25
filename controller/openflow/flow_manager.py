@@ -42,7 +42,20 @@ class FlowManager:
         match_bytes = build_match(**match_kwargs)
         actions = build_action_output(out_port)
         instructions = build_instruction_apply_actions(actions)
-        
+
+        # Replace an existing destination rule rather than keeping multiple
+        # cached versions with different output ports.
+        dst_target = (
+            match_kwargs.get("ipv4_dst")
+            or match_kwargs.get("arp_tpa")
+            or match_kwargs.get("eth_dst", "")
+        )
+        eth_t = match_kwargs.get("eth_type", "")
+        flow_id = f"{datapath.sw_id}_{eth_t}_{dst_target}_{priority}"
+        existing = self.active_flows.get(flow_id)
+        if existing and command == OFPFC_ADD:
+            command = OFPFC_MODIFY
+
         flow_mod = build_flow_mod(
             cookie=cookie,
             command=command,
@@ -55,9 +68,6 @@ class FlowManager:
         
         success = await datapath.send_msg(flow_mod)
         if success:
-            dst_target = match_kwargs.get("ipv4_dst") or match_kwargs.get("arp_tpa") or match_kwargs.get("eth_dst", "")
-            eth_t = match_kwargs.get("eth_type", "")
-            flow_id = f"{datapath.sw_id}_{eth_t}_{dst_target}_{out_port}"
             self.active_flows[flow_id] = {
                 "switch": datapath.sw_id,
                 "dpid": datapath.dpid,
@@ -103,6 +113,13 @@ class FlowManager:
         for sw_id, in_p, out_p in port_hops:
             dp = self.switch_manager.get_datapath_by_name(sw_id)
             if not dp:
+                log.warning(
+                    "[FLOW] Cannot install %s -> %s route on %s: datapath is not connected",
+                    src_ip,
+                    dst_ip,
+                    sw_id,
+                )
+                all_success = False
                 continue
                 
             # IPv4 Flow Rule (destination-based matching for seamless multi-hop forwarding)

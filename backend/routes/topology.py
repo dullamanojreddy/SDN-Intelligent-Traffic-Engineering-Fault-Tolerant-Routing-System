@@ -77,6 +77,8 @@ async def get_metrics():
     total_bw = sum(l.current_rate_mbps for l in topo.links)
     avg_util = sum(l.utilization_pct for l in topo.links) / max(len(topo.links), 1)
     max_util = max((l.utilization_pct for l in topo.links), default=0.0)
+    active_links = [l for l in topo.links if l.is_active]
+    avg_latency = sum(l.latency_ms for l in active_links) / max(len(active_links), 1)
     
     return {
         "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
@@ -89,7 +91,7 @@ async def get_metrics():
         "max_utilization_pct": round(max_util, 2),
         "congested_links_count": len([l for l in topo.links if l.utilization_pct >= 85.0]),
         "failed_links_count": len([l for l in topo.links if not l.is_active]),
-        "avg_latency_ms": 6.8
+        "avg_latency_ms": round(avg_latency, 2)
     }
 
 @traffic_router.post("/api/network/traffic/start")
@@ -102,6 +104,14 @@ async def stop_traffic():
 
 @traffic_router.post("/api/network/failure/simulate")
 async def simulate_failure(req: FailureSimulateRequest):
+    if not topology_service.network_graph.graph.has_edge(
+        req.src_switch, req.dst_switch
+    ):
+        raise HTTPException(
+            status_code=404,
+            detail=f"Link not found: {req.src_switch}-{req.dst_switch}",
+        )
+
     is_active = (req.action.upper() != "DOWN")
     topology_service.network_graph.update_link_metrics(
         req.src_switch, req.dst_switch,
@@ -146,7 +156,19 @@ async def get_routing_decisions():
 @routing_router.post("/api/routing/recalculate")
 async def recalculate_route(req: RecalculateRouteRequest):
     router = DijkstraRouter(topology_service.network_graph)
-    paths = router.calculate_k_shortest_paths("s1", "s7", k=3)
+    hosts_by_ip = {
+        host.ip: host.connected_switch
+        for host in topology_service.get_topology().hosts
+    }
+    src_switch = hosts_by_ip.get(req.source_ip)
+    dst_switch = hosts_by_ip.get(req.dest_ip)
+    if not src_switch or not dst_switch:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Unknown host pair: {req.source_ip} -> {req.dest_ip}",
+        )
+
+    paths = router.calculate_k_shortest_paths(src_switch, dst_switch, k=3)
     return {
         "status": "SUCCESS",
         "source": req.source_ip,

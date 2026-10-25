@@ -239,6 +239,7 @@ def test_port_stats_and_congestion_trigger():
     assert "s1-s2" in app.stats_manager.link_metrics
     metrics = app.stats_manager.link_metrics["s1-s2"]
     assert metrics["utilization_pct"] >= 85.0
+    assert metrics["drop_rate"] == pytest.approx(4.7619, rel=1e-3)
 
 
 def test_full_7_switch_mesh_end_to_end():

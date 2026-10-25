@@ -374,3 +374,95 @@ sudo ovs-ofctl -O OpenFlow13 dump-ports s7
 # ⭐ Support
 
 If you find this project useful or interesting, consider giving the repository a ⭐ on GitHub!
+
+---
+
+# Demonstration Startup and Testing Commands
+
+The complete verified guide is available in
+[docs/DEMONSTRATION.md](docs/DEMONSTRATION.md).
+
+## Recommended startup
+
+Run the controller and Mininet in the same WSL environment so the topology
+can use `127.0.0.1:6653`.
+
+### WSL terminal 1: controller
+
+```bash
+cd "/mnt/c/Users/D Manoj Reddy/Desktop/sdn"
+source .venv-linux/bin/activate
+python -m controller.app
+```
+
+### Windows PowerShell terminal 2: backend
+
+```powershell
+cd "C:\Users\D Manoj Reddy\Desktop\sdn"
+.\.venv\Scripts\Activate.ps1
+uvicorn backend.main:app --reload --port 8000
+```
+
+### Windows PowerShell terminal 3: frontend
+
+```powershell
+cd "C:\Users\D Manoj Reddy\Desktop\sdn\frontend"
+npm run dev
+```
+
+Open the dashboard at <http://localhost:5173>.
+
+### WSL terminal 4: Mininet
+
+```bash
+cd "/mnt/c/Users/D Manoj Reddy/Desktop/sdn"
+source .venv-linux/bin/activate
+sudo mn -c
+sudo -E python3 network/topologies/mesh.py
+```
+
+Wait for `*** Starting CLI:` and then run commands inside the Mininet CLI
+without typing the `mininet>` prompt:
+
+```text
+nodes
+net
+sh ovs-vsctl get Controller s1 is_connected
+pingall
+h1 ping -c 10 h7
+sh ovs-ofctl -O OpenFlow13 dump-flows s1
+```
+
+Expected healthy result:
+
+```text
+*** Results: 0% dropped (12/12 received)
+```
+
+## Failover test
+
+Disable both ends of the `s1-s2` link:
+
+```text
+sh ip link set dev s1-eth1 down
+sh ip link set dev s2-eth1 down
+sh ip link show dev s1-eth1
+sh ip link show dev s2-eth1
+sh ovs-ofctl -O OpenFlow13 show s1
+h1 ping -c 10 h7
+pingall
+```
+
+Traffic should continue through an alternate path with 0% packet loss. The
+dashboard should display the failed link in red after its topology refresh.
+
+Restore both ends after testing:
+
+```text
+sh ip link set dev s1-eth1 up
+sh ip link set dev s2-eth1 up
+```
+
+Do not paste `mininet>` into the CLI. Run one command at a time. Use
+`ip link show` and `ovs-ofctl show` for authoritative link state; Mininet's
+`links` display can remain `OK OK` after a manual interface shutdown.

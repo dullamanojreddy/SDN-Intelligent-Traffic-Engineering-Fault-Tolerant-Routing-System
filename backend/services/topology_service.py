@@ -4,6 +4,7 @@ Topology Service - Aggregates Live Controller Graph and Real-time Telemetry
 from typing import List, Dict, Optional, Any
 from controller.topology.graph import NetworkGraph
 from controller.models.topology import SwitchNode, HostNode, LinkEdge, TopologyData, SwitchPort, LinkStatus
+from controller.topology.state_bridge import get_link_states
 import time
 
 class TopologyService:
@@ -58,10 +59,14 @@ class TopologyService:
             HostNode(mac="00:00:00:00:00:08", ip="10.0.0.8", connected_switch="s7", connected_port=5, name="Host 8 (H8)"),
         ]
         
+        controller_states = get_link_states()
         links: List[LinkEdge] = []
         for u, v, d in self.network_graph.graph.edges(data=True):
+            link_id = f"{u}-{v}"
+            is_active = controller_states.get(link_id, d.get("is_active", True))
+            status = LinkStatus.FAILED if not is_active else d.get("status", LinkStatus.NORMAL)
             links.append(LinkEdge(
-                link_id=f"{u}-{v}",
+                link_id=link_id,
                 src_dpid=u,
                 src_port=d.get("src_port", 1),
                 dst_dpid=v,
@@ -71,8 +76,8 @@ class TopologyService:
                 utilization_pct=d.get("utilization_pct", 0.0),
                 latency_ms=d.get("latency_ms", 5.0),
                 packet_loss_pct=d.get("loss_pct", 0.0),
-                status=d.get("status", LinkStatus.NORMAL),
-                is_active=d.get("is_active", True)
+                status=status,
+                is_active=is_active
             ))
             
         return TopologyData(

@@ -1,17 +1,23 @@
 import React, { useEffect, useState } from 'react';
 import { api } from '../services/api';
-import { RoutingDecision } from '../types/network';
+import { AlertItem, RoutingDecision } from '../types/network';
 import { GitFork, ArrowRight, Zap, Scale, CheckCircle2 } from 'lucide-react';
 
 export const Routing: React.FC = () => {
   const [decisions, setDecisions] = useState<RoutingDecision[]>([]);
+  const [alerts, setAlerts] = useState<AlertItem[]>([]);
   const [srcIp, setSrcIp] = useState('10.0.0.1');
   const [dstIp, setDstIp] = useState('10.0.0.8');
   const [qosClass, setQosClass] = useState('VIDEO');
   const [candidatePaths, setCandidatePaths] = useState<any[]>([]);
 
   useEffect(() => {
-    api.getRoutingDecisions().then((res) => setDecisions(res.data));
+    Promise.all([api.getRoutingDecisions(), api.getAlerts()])
+      .then(([decisionsRes, alertsRes]) => {
+        setDecisions(decisionsRes.data);
+        setAlerts(alertsRes.data);
+      })
+      .catch(console.error);
   }, []);
 
   const handleCompute = async () => {
@@ -107,6 +113,19 @@ export const Routing: React.FC = () => {
             </div>
           </div>
         )}
+      </div>
+
+      <div className="glass-panel p-5 rounded-2xl border border-cyber-border space-y-3">
+        <h3 className="text-xs font-bold text-slate-300 uppercase tracking-wider">Latest routing and network alerts</h3>
+        {alerts.length ? alerts.slice(0, 4).map((alert, index) => (
+          <div key={`${alert.timestamp}-${index}`} className="flex items-start justify-between gap-4 p-3 rounded-xl bg-[#0E1017] text-xs">
+            <div>
+              <p className="font-semibold text-slate-200">{alert.type} <span className="text-slate-500">({alert.source})</span></p>
+              <p className="text-slate-400 mt-1">{alert.message}</p>
+            </div>
+            <span className="text-slate-500 font-mono whitespace-nowrap">{alert.timestamp}</span>
+          </div>
+        )) : <p className="text-sm text-slate-500">N/A — no alerts reported.</p>}
       </div>
 
       {/* Historical Audit Trail */}

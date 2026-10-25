@@ -97,7 +97,11 @@ class StatsManager:
                     
                     # Packet drop rate
                     total_tx = delta_tx_pkts + delta_tx_drops
-                    drop_rate = (delta_tx_drops / total_tx) if total_tx > 0 else 0.0
+                    drop_rate_pct = (
+                        (delta_tx_drops / total_tx) * 100.0
+                        if total_tx > 0
+                        else 0.0
+                    )
                     
                     # Find matching link in NetworkGraph
                     src_sw = dp.sw_id
@@ -108,13 +112,15 @@ class StatsManager:
                             
                             # Update graph metrics
                             self.network_graph.update_link_utilization(u, v, util_pct)
-                            self.network_graph.update_link_packet_loss(u, v, drop_rate)
+                            self.network_graph.update_link_packet_loss(
+                                u, v, drop_rate_pct
+                            )
                             
                             link_id = f"{u}-{v}"
                             self.link_metrics[link_id] = {
                                 "throughput_mbps": tx_mbps,
                                 "utilization_pct": util_pct,
-                                "drop_rate": drop_rate,
+                                "drop_rate": drop_rate_pct,
                             }
                             
                             # Feed into CongestionDetector
@@ -122,7 +128,7 @@ class StatsManager:
                             if cong_event:
                                 log.warning(
                                     f"🚨 CONGESTION DETECTED on {link_id}: {util_pct:.1f}% load "
-                                    f"(Throughput: {tx_mbps:.2f} Mbps, Drops: {drop_rate*100:.2f}%)"
+                                    f"(Throughput: {tx_mbps:.2f} Mbps, Drops: {drop_rate_pct:.2f}%)"
                                 )
                                 if self.event_manager:
                                     self.event_manager.publish(cong_event)

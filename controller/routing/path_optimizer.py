@@ -79,9 +79,16 @@ class PathOptimizer:
             return rerouted
 
         for flow in active_flows:
-            src_sw = flow.get("switch", "s1")
-            target_sw = "s7" if src_sw != "s7" else "s1"
-            new_path, new_cost = self.router.calculate_shortest_path(src_sw, target_sw)
-            if new_path and len(new_path) >= 2:
-                rerouted.append((flow, new_path, new_cost))
+            src_sw = flow.get("src_switch")
+            target_sw = flow.get("dst_switch")
+            if not src_sw or not target_sw:
+                continue
+
+            for candidate in self.router.calculate_k_shortest_paths(
+                src_sw, target_sw, k=5
+            ):
+                path = candidate["path"]
+                if (u, v) not in zip(path, path[1:]):
+                    rerouted.append((flow, path, candidate["cost"]))
+                    break
         return rerouted

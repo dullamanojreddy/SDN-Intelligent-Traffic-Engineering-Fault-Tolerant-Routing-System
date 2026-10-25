@@ -6,9 +6,6 @@ import {
   GitCommit,
   AlertTriangle,
   Zap,
-  ArrowUpRight,
-  TrendingUp,
-  Cpu,
   Layers
 } from 'lucide-react';
 import { KpiCard } from '../components/metrics/KpiCard';
@@ -58,22 +55,13 @@ export const Dashboard: React.FC = () => {
             Real-time topology monitoring, autonomous Dijkstra traffic engineering & fault recovery.
           </p>
         </div>
-        <div className="flex items-center space-x-3">
-          <button
-            onClick={() => api.recalculateRoute({ source_ip: '10.0.0.1', dest_ip: '10.0.0.8' })}
-            className="bg-purple-600/20 border border-purple-500/40 hover:bg-purple-600/30 text-purple-300 px-4 py-2 rounded-xl text-xs font-semibold flex items-center space-x-2 transition"
-          >
-            <Zap className="w-3.5 h-3.5" />
-            <span>Recalculate Routes</span>
-          </button>
-        </div>
       </div>
 
       {/* KPI Cards Row */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         <KpiCard
-          title="Active Switches"
-          value={metrics?.total_switches ?? 7}
+          title="Connected Switches"
+          value={metrics?.total_switches ?? 'N/A'}
           subtitle="OpenFlow 1.3 Datapaths"
           icon={Server}
           color="purple"
@@ -81,23 +69,23 @@ export const Dashboard: React.FC = () => {
         />
         <KpiCard
           title="Discovered Hosts"
-          value={metrics?.total_hosts ?? 4}
+          value={metrics?.total_hosts ?? 'N/A'}
           subtitle="ARP Auto-Learned Endpoints"
           icon={Monitor}
           color="emerald"
           change="10.0.0.0/24"
         />
         <KpiCard
-          title="Total Bandwidth"
-          value={`${metrics?.total_bandwidth_mbps ?? 78.4} M`}
-          subtitle={`Avg Util: ${metrics?.avg_utilization_pct ?? 34.2}%`}
-          icon={TrendingUp}
+          title="Average Link Utilization"
+          value={metrics ? `${metrics.avg_utilization_pct.toFixed(1)}%` : 'N/A'}
+          subtitle="Current measured links"
+          icon={Activity}
           color="indigo"
-          change="Real-time"
+          change={metrics ? `${metrics.congested_links_count} congested` : undefined}
         />
         <KpiCard
           title="Active Flows"
-          value={metrics?.active_flows ?? 14}
+          value={metrics?.active_flows ?? 'N/A'}
           subtitle="Installed Table-0 Matches"
           icon={GitCommit}
           color="amber"

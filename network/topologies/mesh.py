@@ -9,6 +9,8 @@ H1, H2 -- S1 (100M)    S4 (100M)        S7 -- H7, H8
                 \   /             \   /
                  S3 (100M) ------- S6 (100M)
 """
+import os
+
 from mininet.topo import Topo
 from mininet.net import Mininet
 from mininet.node import RemoteController, OVSSwitch
@@ -19,8 +21,8 @@ from mininet.log import setLogLevel, info
 class MultiPathMeshTopo(Topo):
     def build(self):
         # 7 Switches (S1 - S7)
-        # stp=True: Stops broadcast storm (loops)
-        # failMode='standalone': Allows switches to work seamlessly with or without controller
+        # stp=False: Stops broadcast storm (loops)
+        # failMode='secure': Allows switches to work seamlessly with or without controller
         switches = {}
         for i in range(1, 8):
             dpid = f"{i:016x}"
@@ -29,8 +31,8 @@ class MultiPathMeshTopo(Topo):
                 cls=OVSSwitch,
                 dpid=dpid,
                 protocols='OpenFlow13',
-                stp=True,
-                failMode='standalone'
+                stp=False,
+                failMode='secure'
             )
 
         # Hosts
@@ -64,10 +66,11 @@ class MultiPathMeshTopo(Topo):
 def run():
     setLogLevel('info')
     topo = MultiPathMeshTopo()
+    controller_ip = os.environ.get("SDN_CONTROLLER_IP", "127.0.0.1")
     net = Mininet(
         topo=topo,
         switch=OVSSwitch,
-        controller=RemoteController('c0', ip='127.0.0.1', port=6653),
+        controller=RemoteController('c0', ip=controller_ip, port=6653),
         link=TCLink,
         autoSetMacs=True
     )

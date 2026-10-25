@@ -39,7 +39,10 @@ class EventManager:
         severity = AlertSeverity.INFO
         
         lower_name = event_type_name.lower()
-        if "fail" in lower_name or "down" in lower_name:
+        if "recover" in lower_name:
+            ev_type = EventType.RECOVERY
+            severity = AlertSeverity.INFO
+        elif "fail" in lower_name or "down" in lower_name:
             ev_type = EventType.LINK_FAILURE
             severity = AlertSeverity.CRITICAL
         elif "congest" in lower_name:

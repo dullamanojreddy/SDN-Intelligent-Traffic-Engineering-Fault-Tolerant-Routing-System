@@ -31,6 +31,7 @@ from controller.openflow.flow_manager import FlowManager
 from controller.openflow.packet_handler import PacketHandler
 from controller.openflow.stats_manager import StatsManager
 from controller.topology.discovery import TopologyDiscovery
+from controller.topology.state_bridge import set_link_state
 
 
 class SDNTrafficEngineApp:
@@ -140,6 +141,11 @@ class SDNTrafficEngineApp:
             for ev in events:
                 if self.event_manager:
                     self.event_manager.emit("link_failure", ev.model_dump() if hasattr(ev, 'model_dump') else ev.__dict__)
+                failed_link_id = ev.data.get("link_id", "")
+                set_link_state(failed_link_id, False)
+                if "-" in failed_link_id:
+                    src_dpid, dst_dpid = failed_link_id.split("-", 1)
+                    set_link_state(f"{dst_dpid}-{src_dpid}", False)
                 # Trigger failover recalculation
                 self._trigger_failover_recovery(ev.data.get("link_id", ""))
         else:
@@ -147,26 +153,105 @@ class SDNTrafficEngineApp:
             for u, v, d in self.network_graph.graph.edges(data=True):
                 if (u == dp.sw_id and d.get("src_port") == status.port_no) or (v == dp.sw_id and d.get("dst_port") == status.port_no):
                     self.network_graph.update_link_metrics(u, v, utilization_pct=d.get("utilization_pct", 0.0), is_active=True)
+                    set_link_state(f"{u}-{v}", True)
 
     def _on_congestion_alert(self, link_id: str, utilization: float):
-        """Triggered when sustained congestion is detected on a link."""
-        log.warning(f"⚡ Initiating dynamic rerouting away from congested link {link_id} ({utilization:.1f}%)")
-        congested_flows = list(self.active_flows.values())
-        if congested_flows:
-            new_routes = self.optimizer.optimize_congested_flows(
-                congested_flows, congested_link=link_id
+        """Reroute host pairs whose current path contains a congested link."""
+        log.warning(
+            f"Congestion detected on link {link_id} ({utilization:.1f}%); "
+            "evaluating host-to-host alternate paths"
+        )
+
+        if "-" not in link_id:
+            return
+
+        congested_src, congested_dst = link_id.split("-", 1)
+        hosts = dict(self.packet_handler.host_ip_table)
+        for src_ip, (src_sw, src_port, src_mac) in hosts.items():
+            for dst_ip, (dst_sw, dst_port, dst_mac) in hosts.items():
+                if src_ip == dst_ip or src_sw == dst_sw:
+                    continue
+
+                alternate = next(
+                    (
+                        candidate["path"]
+                        for candidate in self.router.calculate_k_shortest_paths(
+                            src_sw, dst_sw, k=5
+                        )
+                        if (congested_src, congested_dst) not in zip(
+                            candidate["path"], candidate["path"][1:]
+                        )
+                    ),
+                    None,
+                )
+                if alternate:
+                    asyncio.create_task(
+                        self._install_host_route(
+                            alternate,
+                            src_ip,
+                            dst_ip,
+                            src_port,
+                            dst_port,
+                            src_mac,
+                            dst_mac,
+                            link_id,
+                        )
+                    )
+
+    async def _install_host_route(
+        self,
+        path: List[str],
+        src_ip: str,
+        dst_ip: str,
+        src_port: int,
+        dst_port: int,
+        src_mac: str,
+        dst_mac: str,
+        avoided_link_id: str,
+    ):
+        """Install a destination route using the endpoints that own the flow."""
+        if not path or len(path) < 2:
+            return
+
+        hops = self.packet_handler._build_port_hops(
+            path,
+            ingress_port=src_port,
+            egress_port=dst_port,
+        )
+        await self.flow_manager.install_path_forwarding(
+            path=path,
+            port_hops=hops,
+            src_ip=src_ip,
+            dst_ip=dst_ip,
+            src_mac=src_mac,
+            dst_mac=dst_mac,
+            priority=100,
+            idle_timeout=300,
+        )
+        log.info(
+            f"Congestion recovery route: {src_ip} -> {dst_ip} "
+            f"via {' -> '.join(path)}"
+        )
+        if self.event_manager:
+            self.event_manager.emit(
+                "route_changed",
+                {
+                    "source_ip": src_ip,
+                    "dest_ip": dst_ip,
+                    "new_path": path,
+                    "reason": f"congested link {avoided_link_id} avoided",
+                },
             )
-            for old_flow, new_path, new_cost in new_routes:
-                log.info(f"Rerouted Flow -> New Path: {' -> '.join(new_path)} (Cost: {new_cost:.4f})")
-                asyncio.create_task(self._install_rerouted_flow(old_flow, new_path))
 
     async def _install_rerouted_flow(self, flow_info: Dict[str, Any], path: List[str]):
-        """Installs forwarding rules dynamically for a specific rerouted flow using topology-derived endpoints."""
+        """Install a reroute only when the flow includes explicit endpoints."""
         if not path or len(path) < 2:
             return
         match = flow_info.get("match", {})
         dst_ip = match.get("ipv4_dst")
-        if not dst_ip:
+        src_ip = flow_info.get("src_ip")
+        src_sw = flow_info.get("src_switch")
+        if not dst_ip or not src_ip or not src_sw:
             return
 
         dst_host_info = self.packet_handler.host_ip_table.get(dst_ip)
@@ -174,16 +259,10 @@ class SDNTrafficEngineApp:
             return
         dst_sw, dst_port, dst_mac = dst_host_info
 
-        src_sw = path[0]
-        src_ip = "0.0.0.0"
-        src_port = 1
-        src_mac = None
-        for ip, (sw, port, mac) in self.packet_handler.host_ip_table.items():
-            if sw == src_sw and ip != dst_ip:
-                src_ip = ip
-                src_port = port
-                src_mac = mac
-                break
+        src_host_info = self.packet_handler.host_ip_table.get(src_ip)
+        if not src_host_info or src_host_info[0] != src_sw:
+            return
+        _, src_port, src_mac = src_host_info
 
         hops = self.packet_handler._build_port_hops(path, ingress_port=src_port, egress_port=dst_port)
         await self.flow_manager.install_path_forwarding(
@@ -193,7 +272,7 @@ class SDNTrafficEngineApp:
             dst_ip=dst_ip,
             src_mac=src_mac,
             dst_mac=dst_mac,
-            priority=200,  # Higher priority override
+            priority=100,
             idle_timeout=300,
         )
 
@@ -205,24 +284,73 @@ class SDNTrafficEngineApp:
             await self._install_rerouted_flow(flow, path)
 
     def _trigger_failover_recovery(self, failed_link_id: str):
-        """Recalculates paths for affected flows upon link failure."""
-        u, v = failed_link_id.split("-") if "-" in failed_link_id else ("", "")
-        if not u or not v:
+        """Recalculate host-to-host routes after a link failure."""
+        if not failed_link_id:
             return
-        
-        new_path, cost, recovery_time = self.recovery_engine.compute_failover_path(u, v, failed_link_id)
-        if new_path and len(new_path) >= 2:
-            log.info(
-                f"✅ Sub-second Failover Route Computed: {' -> '.join(new_path)} "
-                f"(Cost: {cost:.4f}, Recovery Duration: {recovery_time:.2f}ms)"
-            )
-            if self.event_manager:
-                self.event_manager.emit(
-                    "failover_recovered",
-                    {"failed_link": failed_link_id, "new_path": new_path, "recovery_ms": recovery_time},
+
+        log.warning(
+            f"Failover triggered for failed link: {failed_link_id}"
+        )
+
+        asyncio.create_task(
+            self._recover_host_routes(failed_link_id)
+        )
+
+    async def _recover_host_routes(self, failed_link_id: str):
+        """Reinstall valid routes for all known host destinations."""
+
+        hosts = dict(self.packet_handler.host_ip_table)
+
+        for dst_ip, (dst_sw, dst_port, dst_mac) in hosts.items():
+
+            for src_ip, (src_sw, src_port, src_mac) in hosts.items():
+
+                if src_ip == dst_ip:
+                    continue
+
+                if src_sw == dst_sw:
+                    continue
+
+                path, cost = self.router.calculate_shortest_path(
+                    src_sw, dst_sw
                 )
-            for flow in list(self.active_flows.values()):
-                asyncio.create_task(self._install_rerouted_flow(flow, new_path))
+
+                if not path or len(path) < 2:
+                    log.warning(
+                        f"No recovery path: {src_ip} -> {dst_ip}"
+                    )
+                    continue
+
+                hops = self.packet_handler._build_port_hops(
+                    path,
+                    ingress_port=src_port,
+                    egress_port=dst_port
+                )
+
+                await self.flow_manager.install_path_forwarding(
+                    path=path,
+                    port_hops=hops,
+                    src_ip=src_ip,
+                    dst_ip=dst_ip,
+                    src_mac=src_mac,
+                    dst_mac=dst_mac,
+                    priority=100,
+                    idle_timeout=300
+                )
+
+                log.info(
+                    f"Recovery route: {src_ip} -> {dst_ip} "
+                    f"via {' -> '.join(path)}"
+                )
+
+        if self.event_manager:
+            self.event_manager.emit(
+                "failover_recovered",
+                {
+                    "failed_link": failed_link_id,
+                    "status": "routes_recalculated"
+                }
+            )
 
     # --------------------------------------------------------------------------
     # Topology Initialization & Startup
@@ -260,10 +388,20 @@ class SDNTrafficEngineApp:
             try:
                 await asyncio.sleep(0.2)
                 connected_switches = set(dp.sw_id for dp in self.switch_manager.datapaths.values())
-                if len(connected_switches) >= 7 or ("s1" in connected_switches and "s7" in connected_switches):
+                expected_switches = {f"s{i}" for i in range(1, 8)}
+                if expected_switches.issubset(connected_switches):
                     await self.packet_handler.install_proactive_mesh_routes()
-                    log.info("[PROACTIVE ROUTE] Baseline OpenFlow forwarding rules successfully provisioned for all mesh switches.")
+                    log.info(
+                        "[PROACTIVE ROUTE] Baseline OpenFlow forwarding rules "
+                        "successfully provisioned for all mesh switches."
+                    )
                     await asyncio.sleep(30.0)
+                elif connected_switches:
+                    missing = sorted(expected_switches - connected_switches)
+                    log.debug(
+                        "[PROACTIVE ROUTE] Waiting for mesh switches: %s",
+                        ", ".join(missing),
+                    )
             except asyncio.CancelledError:
                 break
             except Exception as e:
