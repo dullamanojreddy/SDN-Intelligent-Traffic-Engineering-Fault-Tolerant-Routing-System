@@ -1,7 +1,16 @@
 """Small authenticated HTTP management API hosted by the controller process."""
 import asyncio
+import hmac
 import json
 from typing import Any
+
+from controller.topology.sync import SnapshotError
+
+MAX_BODY_BYTES = 1_000_000
+REASONS = {
+    200: "OK", 400: "Bad Request", 401: "Unauthorized", 404: "Not Found",
+    409: "Conflict", 422: "Unprocessable Entity", 500: "Internal Server Error",
+}
 
 
 class ControllerManagementAPI:
@@ -34,8 +43,11 @@ class ControllerManagementAPI:
                 for key, value in [line.split(": ", 1)]
             }
             length = int(headers.get("content-length", "0"))
+            if length < 0 or length > MAX_BODY_BYTES:
+                await self._write(writer, 400, {"detail": "Invalid content length"})
+                return
             body = await asyncio.wait_for(reader.readexactly(length), timeout=5) if length else b""
-            if headers.get("authorization") != f"Bearer {self.token}":
+            if not hmac.compare_digest(headers.get("authorization", ""), f"Bearer {self.token}"):
                 await self._write(writer, 401, {"detail": "Unauthorized"})
                 return
             if method == "GET" and path == "/health":
@@ -49,9 +61,43 @@ class ControllerManagementAPI:
                 result = await self.app.route_installer.install(request)
                 await self._write(writer, 200 if result["status"] != "FAILED" else 422, result)
                 return
+            if method == "GET" and path == "/state":
+                await self._write(writer, 200, self.app.export_state())
+                return
+            if method == "POST" and path == "/role":
+                request = json.loads(body.decode("utf-8") or "{}")
+                try:
+                    result = await self.app.ha.set_role(str(request.get("role", "")), reason=request.get("reason", "api"))
+                except ValueError as exc:
+                    await self._write(writer, 422, {"detail": str(exc)})
+                    return
+                await self._write(writer, 200, result)
+                return
+            if method == "GET" and path == "/flows":
+                await self._write(writer, 200, {"flows": self.app.export_flows()})
+                return
+            if method == "POST" and path == "/topology/sync":
+                try:
+                    snapshot = json.loads(body.decode("utf-8"))
+                    summary = await self.app.apply_topology_snapshot(snapshot)
+                except SnapshotError as exc:
+                    await self._write(writer, 422, {"detail": str(exc)})
+                    return
+                except ValueError as exc:
+                    if str(exc).startswith("stale"):
+                        await self._write(writer, 409, {
+                            "detail": str(exc),
+                            "applied_version": self.app.topology_version,
+                        })
+                        return
+                    raise
+                await self._write(writer, 200, {"status": "APPLIED", **summary})
+                return
             await self._write(writer, 404, {"detail": "Not found"})
         except (asyncio.IncompleteReadError, asyncio.TimeoutError, ValueError, json.JSONDecodeError) as exc:
-            await self._write(writer, 400, {"detail": str(exc)})
+            await self._write(writer, 400, {"detail": str(exc) or exc.__class__.__name__})
+        except Exception as exc:  # never leave the caller hanging on a handler bug
+            await self._write(writer, 500, {"detail": f"{exc.__class__.__name__}: {exc}"})
         finally:
             writer.close()
             await writer.wait_closed()
@@ -59,7 +105,7 @@ class ControllerManagementAPI:
     @staticmethod
     async def _write(writer: asyncio.StreamWriter, status: int, payload: dict) -> None:
         body = json.dumps(payload).encode("utf-8")
-        reason = "OK" if status == 200 else "Unauthorized" if status == 401 else "Bad Request" if status == 400 else "Unprocessable Entity" if status == 422 else "Not Found"
+        reason = REASONS.get(status, "Error")
         response = (
             f"HTTP/1.1 {status} {reason}\r\n"
             "Content-Type: application/json\r\n"

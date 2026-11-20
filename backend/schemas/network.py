@@ -2,7 +2,7 @@
 FastAPI Request & Response Schemas
 """
 from pydantic import BaseModel, Field
-from typing import List, Dict, Optional, Any
+from typing import List, Dict, Literal, Optional, Any
 from controller.models.topology import SwitchNode, HostNode, LinkEdge, TopologyData
 from controller.models.flow import FlowEntry
 from controller.models.metric import NetworkSummaryMetrics, PortMetric
@@ -24,7 +24,8 @@ class SystemStatusResponse(BaseModel):
 class RecalculateRouteRequest(BaseModel):
     source_ip: str
     dest_ip: str
-    qos_class: str = "DEFAULT"
+    qos_class: Literal["DEFAULT", "VOICE", "VIDEO", "WEB", "BACKGROUND", "voice", "video", "web", "background", "default"] = "DEFAULT"
+    max_candidates: int = Field(default=3, ge=1, le=10)
 
 class TrafficStartRequest(BaseModel):
     src_host: str
@@ -36,7 +37,7 @@ class TrafficStartRequest(BaseModel):
 class FailureSimulateRequest(BaseModel):
     src_switch: str
     dst_switch: str
-    action: str = "DOWN"  # DOWN or UP
+    action: Literal["UP", "DOWN", "up", "down"] = "DOWN"
 
 class ExperimentStartRequest(BaseModel):
     name: str
@@ -62,6 +63,13 @@ class LinkCreateRequest(BaseModel):
     dst: str = Field(..., min_length=2, max_length=32)
     capacity_mbps: float = Field(default=100.0, gt=0, le=100000)
     latency_ms: float = Field(default=5.0, ge=0, le=60000)
+    loss_pct: float = Field(default=0.0, ge=0, le=100)
+
+
+class LinkUpdateRequest(BaseModel):
+    capacity_mbps: Optional[float] = Field(default=None, gt=0, le=100000)
+    latency_ms: Optional[float] = Field(default=None, ge=0, le=60000)
+    loss_pct: Optional[float] = Field(default=None, ge=0, le=100)
 
 
 class RouteInstallRequest(BaseModel):

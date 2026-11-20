@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { api } from '../services/api';
-import { AlertItem, RoutingCandidate, RoutingDecision } from '../types/network';
+import { AlertItem, RoutingCandidate, RoutingDecision, RouteExplanation, RouteVerification, TopologyData } from '../types/network';
+import { TopologyGraph } from '../components/topology/TopologyGraph';
 import { GitFork, ArrowRight, Zap, Scale, CheckCircle2, UploadCloud } from 'lucide-react';
 
 export const Routing: React.FC = () => {
@@ -8,11 +9,29 @@ export const Routing: React.FC = () => {
   const [alerts, setAlerts] = useState<AlertItem[]>([]);
   const [srcIp, setSrcIp] = useState('10.0.0.1');
   const [dstIp, setDstIp] = useState('10.0.0.8');
-  const [qosClass, setQosClass] = useState('VIDEO');
+  const [qosClass, setQosClass] = useState('WEB');
   const [candidatePaths, setCandidatePaths] = useState<RoutingCandidate[]>([]);
   const [explanation, setExplanation] = useState('');
+  const [details, setDetails] = useState<RouteExplanation | null>(null);
+  const [expanded, setExpanded] = useState<number | null>(null);
+  const [verification, setVerification] = useState<RouteVerification | null>(null);
+  const [topology, setTopology] = useState<TopologyData | null>(null);
+  const [shownIdx, setShownIdx] = useState(0);
   const [routeError, setRouteError] = useState('');
   const [installation, setInstallation] = useState<any>(null);
+
+  useEffect(() => {
+    // Keep the map and host choices live so edits made elsewhere show up here.
+    const load = () => api.getTopology().then((res) => {
+      setTopology(res.data);
+      const ips = res.data.hosts.map((h) => h.ip);
+      setSrcIp((cur) => (ips.includes(cur) || !ips.length ? cur : ips[0]));
+      setDstIp((cur) => (ips.includes(cur) || ips.length < 2 ? cur : ips[ips.length - 1]));
+    }).catch(console.error);
+    load();
+    const timer = setInterval(load, 3000);
+    return () => clearInterval(timer);
+  }, []);
 
   useEffect(() => {
     Promise.all([api.getRoutingDecisions(), api.getAlerts()])
@@ -33,11 +52,26 @@ export const Routing: React.FC = () => {
       });
       setCandidatePaths(res.data.candidate_paths || []);
       setExplanation(res.data.explanation || '');
+      setDetails(res.data);
+      setExpanded(null);
+      setShownIdx(0);
+      setVerification(null);
       setInstallation(null);
+      api.getRoutingDecisions().then((r) => setDecisions(r.data)).catch(console.error);
     } catch (error: any) {
       setCandidatePaths([]);
       setExplanation('');
+      setDetails(null);
       setRouteError(error.response?.data?.detail || 'Unable to calculate a route');
+    }
+  };
+
+  const handleVerify = async () => {
+    try {
+      const res = await api.verifyRoute(srcIp, dstIp);
+      setVerification(res.data);
+    } catch (error: any) {
+      setVerification({ status: 'UNAVAILABLE', verified: false, reason: error.response?.data?.detail || 'Verification failed' });
     }
   };
 
@@ -75,19 +109,23 @@ export const Routing: React.FC = () => {
         <div className="flex flex-wrap items-center gap-4 text-xs">
           <div>
             <label className="text-slate-400 font-mono block mb-1">Source IP</label>
-            <input
+            <select
               value={srcIp}
               onChange={(e) => setSrcIp(e.target.value)}
               className="bg-[#0E1017] border border-cyber-border rounded-xl px-3 py-2 text-white font-mono"
-            />
+            >
+              {(topology?.hosts ?? []).map((h) => <option key={h.ip} value={h.ip}>{h.name} ({h.ip}) on {h.connected_switch}</option>)}
+            </select>
           </div>
           <div>
             <label className="text-slate-400 font-mono block mb-1">Destination IP</label>
-            <input
+            <select
               value={dstIp}
               onChange={(e) => setDstIp(e.target.value)}
               className="bg-[#0E1017] border border-cyber-border rounded-xl px-3 py-2 text-white font-mono"
-            />
+            >
+              {(topology?.hosts ?? []).map((h) => <option key={h.ip} value={h.ip}>{h.name} ({h.ip}) on {h.connected_switch}</option>)}
+            </select>
           </div>
           <div>
             <label className="text-slate-400 font-mono block mb-1">QoS Service Tier</label>
@@ -114,6 +152,41 @@ export const Routing: React.FC = () => {
           </div>
         </div>
 
+        {topology && (
+          <div className="mt-4 space-y-2">
+            <div className="flex items-center justify-between text-[11px] text-slate-400 font-mono">
+              <span>
+                {candidatePaths[shownIdx]
+                  ? `Highlighted: ${candidatePaths[shownIdx].selected ? 'selected route' : `rejected candidate #${shownIdx + 1}`} ${candidatePaths[shownIdx].path.join(' → ')}`
+                  : 'Evaluate a route to highlight it on the map'}
+              </span>
+              <span className="text-slate-500">gold = route, red dashed = failed link</span>
+            </div>
+            <TopologyGraph
+              topology={topology}
+              highlightPath={candidatePaths[shownIdx]?.path ?? null}
+              highlightHosts={[
+                topology.hosts.find((h) => h.ip === srcIp)?.name ?? '',
+                topology.hosts.find((h) => h.ip === dstIp)?.name ?? '',
+              ]}
+            />
+          </div>
+        )}
+        {details && details.status === 'NO_ROUTE' && (
+          <div className="mt-4 rounded-xl border border-red-500/40 bg-red-950/30 p-3 text-xs text-red-200 space-y-1">
+            <p className="font-semibold">No route exists ({details.source_switch} to {details.dest_switch})</p>
+            <p>{details.explanation}</p>
+          </div>
+        )}
+        {details && details.status === 'SUCCESS' && (
+          <div className="mt-4 text-[11px] font-mono text-slate-400 space-y-1">
+            <div>Weights: latency {details.weights.latency} / utilization {details.weights.utilization} / loss {details.weights.packet_loss} / capacity {details.weights.capacity ?? 0}</div>
+            <div>{details.formula}</div>
+            {details.excluded_links.length > 0 && (
+              <div className="text-amber-400">Excluded links: {details.excluded_links.map((l) => `${l.src}-${l.dst} (${l.reason})`).join('; ')}</div>
+            )}
+          </div>
+        )}
         {candidatePaths.length > 0 && (
           <div className="mt-4 space-y-2">
             <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wider">Candidate Evaluated Paths:</h4>
@@ -122,7 +195,9 @@ export const Routing: React.FC = () => {
               {candidatePaths.map((p, idx) => (
                 <div
                   key={idx}
-                  className={`p-3.5 rounded-xl border text-xs space-y-2 ${
+                  onClick={() => setShownIdx(idx)}
+                  className={`cursor-pointer p-3.5 rounded-xl border text-xs space-y-2 ${
+                    shownIdx === idx ? 'ring-1 ring-amber-400/70 ' : ''}${
                     p.selected ? 'bg-purple-950/20 border-purple-500/40 text-purple-200' : 'bg-[#0E1017] border-cyber-border text-slate-300'
                   }`}
                 >
@@ -135,12 +210,44 @@ export const Routing: React.FC = () => {
                     <div>Composite Cost: {p.cost}</div>
                     <div>Est. Latency: {p.latency_ms} ms</div>
                     <div>Peak Util: {p.max_utilization_pct}%</div>
+                    <div>Hops: {p.hops ?? p.path.length - 1} | Loss: {p.total_loss_pct}%</div>
                     <div className="text-slate-500">{p.decision}</div>
+                    {p.cost_breakdown && (
+                      <button className="text-purple-300 underline" onClick={() => setExpanded(expanded === idx ? null : idx)}>
+                        {expanded === idx ? 'Hide' : 'Show'} per-link breakdown
+                      </button>
+                    )}
+                    {expanded === idx && p.cost_breakdown && (
+                      <div className="space-y-0.5 pt-1">
+                        <div>latency {p.cost_breakdown.latency} + util {p.cost_breakdown.utilization} + loss {p.cost_breakdown.packet_loss} + penalty {p.cost_breakdown.congestion_penalty}</div>
+                        {p.edge_metrics?.map((e) => (
+                          <div key={`${e.src}-${e.dst}`}>{e.src}→{e.dst}: {e.latency_ms}ms, {e.utilization_pct}% of {e.capacity_mbps}Mbps, loss {e.packet_loss_pct}%, cost {e.cost}</div>
+                        ))}
+                      </div>
+                    )}
                   </div>
                   {p.selected && <button onClick={() => handleInstall(p.path)} className="button-secondary mt-2"><UploadCloud className="w-3 h-3" /> Install selected route</button>}
                 </div>
               ))}
             </div>
+          </div>
+        )}
+        {details && (
+          <div className="mt-4 space-y-2">
+            <button onClick={handleVerify} className="button-secondary">Verify against OVS flow tables</button>
+            {verification && (
+              <div className={`rounded-xl border p-3 text-xs space-y-1 ${verification.verified ? 'border-emerald-500/40 bg-emerald-950/20 text-emerald-200' : 'border-amber-500/40 bg-amber-950/20 text-amber-200'}`}>
+                <div className="font-semibold">Data-plane check: {verification.status}</div>
+                {verification.reason && <div>{verification.reason}</div>}
+                {verification.installed_path && <div className="font-mono">Installed path: {verification.installed_path.join(' → ')}</div>}
+                {verification.hops?.map((h) => (
+                  <div key={h.switch} className="font-mono text-[11px]">
+                    {h.switch}: expected port {h.expected_out_port ?? '-'}, installed port {h.installed_out_port ?? '-'} ({h.status}{h.packets != null ? `, ${h.packets} pkts` : ''})
+                  </div>
+                ))}
+                {verification.discrepancies?.map((d, i) => <div key={i} className="text-red-300">⚠ {d}</div>)}
+              </div>
+            )}
           </div>
         )}
         {routeError && <p className="mt-4 text-xs text-red-400">{routeError}</p>}
@@ -168,6 +275,7 @@ export const Routing: React.FC = () => {
       <div className="glass-panel p-5 rounded-2xl border border-cyber-border space-y-4">
         <h3 className="text-xs font-bold text-slate-300 uppercase tracking-wider">Autonomous Reroute Audit Trail</h3>
         <div className="space-y-3">
+          {decisions.length === 0 && <p className="text-sm text-slate-500">No routing changes recorded yet. Edit the topology or fail a link to see decisions.</p>}
           {decisions.map((dec) => (
             <div key={dec.decision_id} className="p-4 rounded-xl bg-[#0E1017] border border-cyber-border space-y-2 text-xs">
               <div className="flex justify-between items-center">
@@ -177,7 +285,7 @@ export const Routing: React.FC = () => {
               <div className="flex items-center space-x-2 font-mono">
                 <span className="text-slate-500 line-through">{dec.old_path.join('→')} (Cost: {dec.old_cost})</span>
                 <span className="text-purple-400 font-bold">⇒</span>
-                <span className="text-emerald-400 font-bold">{dec.new_path.join('→')} (Cost: {dec.new_cost})</span>
+                <span className="text-emerald-400 font-bold">{dec.new_path.length ? dec.new_path.join('→') : 'NO ROUTE'} (Cost: {dec.new_cost})</span>
               </div>
               <p className="text-slate-400">{dec.reason}</p>
             </div>

@@ -1,6 +1,7 @@
 """
 OpenFlow 1.3 Flow Modification & Installation Manager
 """
+import time
 from typing import Dict, List, Optional, Any, Tuple
 from controller.utils.logger import log
 from controller.openflow.protocol import (
@@ -37,23 +38,23 @@ class FlowManager:
         hard_timeout: int = 0,
         cookie: int = 0,
         command: int = OFPFC_ADD,
+        replace: bool = False,
     ) -> bool:
-        """Installs a single OpenFlow rule on the specified switch."""
+        """Installs a single OpenFlow rule on the specified switch.
+
+        ``replace=True`` always sends ADD (which overwrites an identical match). Use it
+        when re-asserting desired state: MODIFY is a no-op if the switch no longer has
+        the rule (deleted externally, restarted), and the controller cache cannot know.
+        """
         match_bytes = build_match(**match_kwargs)
         actions = build_action_output(out_port)
         instructions = build_instruction_apply_actions(actions)
 
         # Replace an existing destination rule rather than keeping multiple
         # cached versions with different output ports.
-        dst_target = (
-            match_kwargs.get("ipv4_dst")
-            or match_kwargs.get("arp_tpa")
-            or match_kwargs.get("eth_dst", "")
-        )
-        eth_t = match_kwargs.get("eth_type", "")
-        flow_id = f"{datapath.sw_id}_{eth_t}_{dst_target}_{priority}"
+        flow_id = self.flow_id_for(datapath.sw_id, match_kwargs, priority)
         existing = self.active_flows.get(flow_id)
-        if existing and command == OFPFC_ADD:
+        if existing and command == OFPFC_ADD and not replace and not self._is_expired(existing):
             command = OFPFC_MODIFY
 
         flow_mod = build_flow_mod(
@@ -76,9 +77,57 @@ class FlowManager:
                 "priority": priority,
                 "idle_timeout": idle_timeout,
                 "hard_timeout": hard_timeout,
+                "installed_at": time.monotonic(),
             }
             log.debug(f"[{datapath.sw_id}] Flow rule installed -> Port {out_port} (Pri: {priority}, Match: {match_kwargs})")
         return success
+
+    @staticmethod
+    def flow_id_for(sw_id: str, match_kwargs: dict, priority: int) -> str:
+        """Cache key for a destination rule on one switch."""
+        dst_target = (
+            match_kwargs.get("ipv4_dst")
+            or match_kwargs.get("arp_tpa")
+            or match_kwargs.get("eth_dst", "")
+        )
+        return f"{sw_id}_{match_kwargs.get('eth_type', '')}_{dst_target}_{priority}"
+
+    @staticmethod
+    def _is_expired(entry: Dict[str, Any]) -> bool:
+        """True when the switch has probably aged the rule out already.
+
+        OFPFC_MODIFY on a missing rule is a no-op in OpenFlow 1.3, so a cached
+        rule that may have idled out must be re-added instead of modified.
+        """
+        idle = entry.get("idle_timeout", 0)
+        hard = entry.get("hard_timeout", 0)
+        age = time.monotonic() - entry.get("installed_at", 0.0)
+        return (idle > 0 and age >= idle) or (hard > 0 and age >= hard)
+
+    def forget_switch(self, sw_id: str) -> int:
+        """Drop cached rules for a switch whose table is no longer trusted
+        (disconnect/reconnect/removal). Returns the number of dropped entries."""
+        stale = [k for k, v in self.active_flows.items() if v["switch"] == sw_id]
+        for key in stale:
+            del self.active_flows[key]
+        return len(stale)
+
+    async def delete_cached_flow(self, flow_id: str) -> bool:
+        """Delete one cached destination rule from its switch and the cache."""
+        entry = self.active_flows.pop(flow_id, None)
+        if not entry:
+            return False
+        datapath = self.switch_manager.get_datapath(entry["dpid"])
+        if not datapath:
+            return False
+        match = {k: v for k, v in entry["match"].items()}
+        del_mod = build_flow_mod(
+            command=OFPFC_DELETE_STRICT,
+            priority=entry["priority"],
+            match=build_match(**match),
+            out_port=OFPP_ANY,
+        )
+        return await datapath.send_msg(del_mod)
 
     async def remove_flows_for_switch(self, datapath: Datapath):
         """Flushes all installed flows on a switch."""
@@ -105,6 +154,8 @@ class FlowManager:
         priority: int = 100,
         idle_timeout: int = 300,
         hard_timeout: int = 0,
+        cookie: int = 0,
+        replace: bool = False,
     ) -> bool:
         """
         Installs multi-hop forwarding rules along a computed path for IPv4 and ARP traffic.
@@ -128,7 +179,8 @@ class FlowManager:
                 "ipv4_dst": dst_ip,
             }
             ok1 = await self.install_flow(
-                dp, match_ip, out_port=out_p, priority=priority, idle_timeout=idle_timeout, hard_timeout=hard_timeout
+                dp, match_ip, out_port=out_p, priority=priority, idle_timeout=idle_timeout,
+                hard_timeout=hard_timeout, cookie=cookie, replace=replace,
             )
             
             # ARP Flow Rule (for direct ARP resolution using target IPv4 address)
@@ -137,7 +189,8 @@ class FlowManager:
                 "arp_tpa": dst_ip,
             }
             ok2 = await self.install_flow(
-                dp, match_arp, out_port=out_p, priority=priority, idle_timeout=idle_timeout, hard_timeout=hard_timeout
+                dp, match_arp, out_port=out_p, priority=priority, idle_timeout=idle_timeout,
+                hard_timeout=hard_timeout, cookie=cookie, replace=replace,
             )
                 
             if not (ok1 and ok2):

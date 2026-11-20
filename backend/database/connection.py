@@ -19,6 +19,7 @@ class DatabaseManager:
             "routing_decisions": [],
             "fault_events": [],
             "alerts": [],
+            "route_installations": [],
         }
 
     async def connect(self):
@@ -45,18 +46,32 @@ class DatabaseManager:
             logger.info("MongoDB connection closed.")
 
     async def insert_one(self, collection: str, document: Dict[str, Any]):
+        # Insert a copy: the Mongo driver mutates its argument (adds ObjectId _id).
         if self.is_connected and self.db is not None:
-            await self.db[collection].insert_one(document)
+            await self.db[collection].insert_one(dict(document))
         else:
-            self.in_memory_store.setdefault(collection, []).append(document)
+            self.in_memory_store.setdefault(collection, []).append(dict(document))
+
+    async def update_many(self, collection: str, query: Dict[str, Any], changes: Dict[str, Any]) -> int:
+        """Set fields on every document matching an equality query. Returns the count."""
+        if self.is_connected and self.db is not None:
+            result = await self.db[collection].update_many(query, {"$set": changes})
+            return result.modified_count
+        count = 0
+        for item in self.in_memory_store.get(collection, []):
+            if all(item.get(k) == v for k, v in query.items()):
+                item.update(changes)
+                count += 1
+        return count
 
     async def find(self, collection: str, query: Dict[str, Any] = None, limit: int = 50) -> List[Dict[str, Any]]:
+        """Return up to ``limit`` documents, most recent first."""
         query = query or {}
         if self.is_connected and self.db is not None:
-            cursor = self.db[collection].find(query).limit(limit)
+            cursor = self.db[collection].find(query, {"_id": 0}).sort("$natural", -1).limit(limit)
             return await cursor.to_list(length=limit)
         else:
             items = self.in_memory_store.get(collection, [])
-            return items[-limit:]
+            return [dict(item) for item in reversed(items[-limit:])]
 
 db_manager = DatabaseManager()

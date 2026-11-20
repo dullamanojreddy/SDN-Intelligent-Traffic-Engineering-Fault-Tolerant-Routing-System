@@ -1,12 +1,13 @@
 import React from 'react';
 import { Activity } from 'lucide-react';
-import { SystemStatus } from '../../types/network';
+import { SystemStatus, ControllerStatus } from '../../types/network';
 
 interface NavbarProps {
   status?: SystemStatus | null;
+  controller?: ControllerStatus | null;
 }
 
-export const Navbar: React.FC<NavbarProps> = ({ status }) => {
+export const Navbar: React.FC<NavbarProps> = ({ status: _status, controller }) => {
   return (
     <header className="h-16 border-b border-cyber-border bg-[#0B0C10]/80 backdrop-blur-md px-6 flex items-center justify-between sticky top-0 z-30">
       <div className="flex items-center space-x-3">
@@ -24,9 +25,11 @@ export const Navbar: React.FC<NavbarProps> = ({ status }) => {
       <div className="flex items-center space-x-4">
         {/* Status Indicator Badges */}
         <div className="flex items-center space-x-2 bg-cyber-card border border-cyber-border px-3 py-1.5 rounded-full text-xs font-mono">
-          <div className="w-2 h-2 rounded-full bg-emerald-400 animate-ping" />
-          <span className="text-slate-300">OpenFlow 1.3:</span>
-          <span className="text-emerald-400 font-semibold">PORT 6653</span>
+          <div className={`w-2 h-2 rounded-full ${controller?.status === 'UP' ? 'bg-emerald-400 animate-ping' : controller?.status === 'DOWN' ? 'bg-red-500' : 'bg-amber-400'}`} />
+          <span className="text-slate-300">Controller:</span>
+          <span className={`font-semibold ${controller?.status === 'UP' ? 'text-emerald-400' : controller?.status === 'DOWN' ? 'text-red-400' : 'text-amber-400'}`}>
+            {controller ? `${controller.status} (${controller.active_role})` : 'UNREACHABLE'}
+          </span>
         </div>
 
       </div>

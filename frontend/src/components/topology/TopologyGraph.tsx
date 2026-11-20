@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { TopologyData, SwitchNode, HostNode, LinkEdge } from '../../types/network';
 import { Activity } from 'lucide-react';
 
@@ -6,24 +6,21 @@ interface TopologyGraphProps {
   topology: TopologyData | null;
   onSelectNode?: (node: SwitchNode | HostNode | null) => void;
   onSelectLink?: (link: LinkEdge | null) => void;
+  /** Switch ids of a route to draw highlighted, in order. */
+  highlightPath?: string[] | null;
+  /** Names of the source and destination hosts of that route. */
+  highlightHosts?: string[];
 }
 
 export const TopologyGraph: React.FC<TopologyGraphProps> = ({
   topology,
   onSelectNode,
   onSelectLink,
+  highlightPath,
+  highlightHosts,
 }) => {
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const [selectedLinkId, setSelectedLinkId] = useState<string | null>(null);
-
-  if (!topology || topology.switches.length === 0) {
-    return (
-      <div className="h-96 glass-panel rounded-2xl flex flex-col items-center justify-center text-slate-500 space-y-2">
-        <Activity className="w-8 h-8 animate-spin text-purple-500" />
-        <p className="text-sm font-mono">Discovering OpenFlow Switches & Topologies...</p>
-      </div>
-    );
-  }
 
   const defaultPositions: Record<string, { x: number; y: number }> = {
     // Hosts
@@ -35,17 +32,68 @@ export const TopologyGraph: React.FC<TopologyGraphProps> = ({
     's5': { x: 550, y: 140 }, 's6': { x: 550, y: 360 }, 's7': { x: 670, y: 250 },
   };
   const [positions, setPositions] = useState(defaultPositions);
+  // Switches placed before they had any link; re-placed once they are connected.
+  const placedLinkless = useRef<Set<string>>(new Set());
   useEffect(() => {
+    if (!topology) return;
     const next = { ...positions };
-    topology.switches.forEach((sw, index) => {
-      if (!next[sw.dpid]) next[sw.dpid] = { x: 180 + (index % 5) * 125, y: 100 + (Math.floor(index / 5) % 3) * 150 };
+    // New nodes go to the first free grid slot so they never sit on top of existing ones.
+    const freeSlot = (candidates: Array<{ x: number; y: number }>) =>
+      candidates.find((c) => Object.values(next).every((p) => Math.hypot(p.x - c.x, p.y - c.y) > 70))
+      ?? candidates[candidates.length - 1];
+    const switchGrid = Array.from({ length: 60 }, (_, i) => ({ x: 120 + (i % 6) * 110, y: 70 + Math.floor(i / 6) * 90 }));
+    const hostGrid = Array.from({ length: 40 }, (_, i) => ({ x: 40 + Math.floor(i / 8) * 60, y: 60 + (i % 8) * 55 }));
+    // Distance from point p to segment a-b (to keep new links from running through nodes).
+    const segDist = (p: { x: number; y: number }, a: { x: number; y: number }, b: { x: number; y: number }) => {
+      const dx = b.x - a.x, dy = b.y - a.y;
+      const t = Math.max(0, Math.min(1, ((p.x - a.x) * dx + (p.y - a.y) * dy) / (dx * dx + dy * dy || 1)));
+      return Math.hypot(p.x - (a.x + t * dx), p.y - (a.y + t * dy));
+    };
+    topology.switches.forEach((sw) => {
+      const neighbours = Array.from(new Set(topology.links
+        .filter((l) => l.src_dpid === sw.dpid || l.dst_dpid === sw.dpid)
+        .map((l) => (l.src_dpid === sw.dpid ? l.dst_dpid : l.src_dpid))))
+        .map((id) => next[id]).filter(Boolean);
+      const replace = placedLinkless.current.has(sw.dpid) && neighbours.length > 0;
+      if (next[sw.dpid] && !replace) return;
+      if (replace) delete next[sw.dpid];
+      if (neighbours.length) placedLinkless.current.delete(sw.dpid); else placedLinkless.current.add(sw.dpid);
+      const free = switchGrid.filter((c) => Object.values(next).every((p) => Math.hypot(p.x - c.x, p.y - c.y) > 70));
+      // Best slot: close to its neighbours, and no link to them passes near another node.
+      const scored = free.map((c) => {
+        const crossings = neighbours.reduce((n, nb) =>
+          n + Object.values(next).filter((p) => p !== nb && segDist(p, c, nb) < 28).length, 0);
+        const length = neighbours.reduce((sum, nb) => sum + Math.hypot(nb.x - c.x, nb.y - c.y), 0);
+        // Never sit on top of an existing link either (it would look like a hop on that link).
+        const onLinks = topology.links.filter((l) => l.src_dpid < l.dst_dpid).reduce((n, l) => {
+          const a = next[l.src_dpid], b = next[l.dst_dpid];
+          return n + (a && b && segDist(c, a, b) < 45 ? 1 : 0);
+        }, 0);
+        return { c, score: crossings * 1000 + onLinks * 1500 + length };
+      }).sort((a, b) => a.score - b.score);
+      next[sw.dpid] = scored.length ? scored[0].c : freeSlot(switchGrid);
     });
-    topology.hosts.forEach((host, index) => {
+    topology.hosts.forEach((host) => {
       const id = (host.name || host.ip).toLowerCase().replace(/[^a-z0-9]/g, '');
-      if (!next[id]) next[id] = { x: 70, y: 80 + (index % 5) * 85 };
+      if (!next[id]) {
+        // Prefer a spot right next to the switch the host hangs off.
+        const sw = next[host.connected_switch];
+        const around = sw ? [[-70, -45], [-70, 45], [70, -45], [70, 45], [0, -80], [0, 80]]
+          .map(([dx, dy]) => ({ x: sw.x + dx, y: sw.y + dy })) : [];
+        next[id] = freeSlot([...around, ...hostGrid]);
+      }
     });
     setPositions(next);
   }, [topology]);
+
+  if (!topology || topology.switches.length === 0) {
+    return (
+      <div className="h-96 glass-panel rounded-2xl flex flex-col items-center justify-center text-slate-500 space-y-2">
+        <Activity className="w-8 h-8 animate-spin text-purple-500" />
+        <p className="text-sm font-mono">Discovering OpenFlow Switches & Topologies...</p>
+      </div>
+    );
+  }
 
   const nodePositions: Record<string, { x: number; y: number; label: string; type: 'switch' | 'host' }> = {};
   topology.switches.forEach((sw) => {
@@ -103,13 +151,23 @@ export const TopologyGraph: React.FC<TopologyGraphProps> = ({
             </g>
           );
         })}
+        {highlightPath && highlightPath.length > 1 && highlightPath.slice(1).map((dstId, i) => {
+          const a = nodePositions[highlightPath[i]];
+          const b = nodePositions[dstId];
+          if (!a || !b) return null;
+          return (
+            <line key={`route-${i}`} x1={a.x} y1={a.y} x2={b.x} y2={b.y} stroke="#FBBF24"
+              strokeWidth={6} strokeLinecap="round" filter="url(#glow)" pointerEvents="none" />
+          );
+        })}
         {topology.hosts.map((host) => {
           const hostId = (host.name || host.ip).toLowerCase().replace(/[^a-z0-9]/g, '');
           const src = nodePositions[hostId];
           const dst = nodePositions[host.connected_switch];
           if (!src || !dst) return null;
+          const onRoute = !!highlightPath && (highlightHosts ?? []).includes(host.name ?? '');
           return <line key={`${hostId}-${host.connected_switch}`} x1={src.x} y1={src.y} x2={dst.x} y2={dst.y}
-            stroke="#10B981" strokeWidth="2" strokeDasharray="4 3" />;
+            stroke={onRoute ? '#FBBF24' : '#10B981'} strokeWidth={onRoute ? 5 : 2} strokeDasharray={onRoute ? undefined : '4 3'} />;
         })}
 
         {/* Nodes (Switches & Hosts) */}

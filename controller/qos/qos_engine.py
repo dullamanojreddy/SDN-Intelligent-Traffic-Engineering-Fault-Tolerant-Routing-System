@@ -17,7 +17,8 @@ class QoSEngine:
             return CostCalculator(
                 alpha=cfg["latency"],
                 beta=cfg["utilization"],
-                gamma=cfg["loss"]
+                gamma=cfg["loss"],
+                delta=cfg.get("capacity", 0.0),
             )
         # Default global policy
         return CostCalculator(

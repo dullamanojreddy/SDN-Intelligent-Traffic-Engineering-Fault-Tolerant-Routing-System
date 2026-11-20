@@ -10,6 +10,7 @@ export const Flows: React.FC = () => {
   const refresh = () => api.getFlows().then((res) => setFlows(res.data)).catch(console.error);
   useEffect(() => { refresh(); }, []);
 
+  const switchIds = Array.from(new Set(flows.map((flow) => flow.dpid))).sort();
   const visibleFlows = switchId === 'all' ? flows : flows.filter((flow) => flow.dpid === switchId);
 
   return (
@@ -17,12 +18,12 @@ export const Flows: React.FC = () => {
       <div className="flex flex-wrap justify-between items-center gap-3">
         <div>
           <h2 className="text-2xl font-bold text-white">Flow Tables</h2>
-          <p className="text-sm text-slate-400">OpenFlow entries exposed by the backend.</p>
+          <p className="text-sm text-slate-400">Flow entries read from the switches (OVS flow tables when a network agent is attached, otherwise the controller's rule registry).</p>
         </div>
         <div className="flex gap-2">
           <select value={switchId} onChange={(e) => setSwitchId(e.target.value)} className="control">
             <option value="all">All switches</option>
-            {Array.from({ length: 7 }, (_, i) => <option key={i} value={`s${i + 1}`}>s{i + 1}</option>)}
+            {switchIds.map((id) => <option key={id} value={id}>{id}</option>)}
           </select>
           <button onClick={refresh} className="button-secondary"><RefreshCw className="w-4 h-4" /> Refresh</button>
         </div>
@@ -37,7 +38,7 @@ export const Flows: React.FC = () => {
               {visibleFlows.map((flow) => (
                 <tr key={flow.flow_id}>
                   <td className="p-4 font-mono text-purple-300">{flow.dpid}</td>
-                  <td className="p-4 font-mono text-slate-300">{flow.match.ipv4_dst ?? 'N/A'}</td>
+                  <td className="p-4 font-mono text-slate-300">{flow.match.ipv4_dst ?? flow.match.arp_tpa ?? 'N/A'}</td>
                   <td className="p-4 text-emerald-400">{flow.instructions[0]?.actions.join(', ') || 'N/A'}</td>
                   <td className="p-4 text-slate-300">{flow.priority}</td>
                   <td className="p-4 text-slate-300">{flow.packet_count.toLocaleString()}</td>

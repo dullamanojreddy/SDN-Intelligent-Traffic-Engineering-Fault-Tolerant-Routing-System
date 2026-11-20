@@ -22,7 +22,7 @@ export const Experiments: React.FC = () => {
       <div className="flex justify-between items-center">
         <div>
           <h2 className="text-2xl font-bold text-white">Experiments</h2>
-          <p className="text-sm text-slate-400">Measured results returned by the existing experiment API.</p>
+          <p className="text-sm text-slate-400">Recorded experiment runs. Automated experiment execution is not implemented yet, so this list stays empty until runs are stored.</p>
         </div>
         <button onClick={refresh} className="button-secondary"><RefreshCw className="w-4 h-4" /> Refresh</button>
       </div>

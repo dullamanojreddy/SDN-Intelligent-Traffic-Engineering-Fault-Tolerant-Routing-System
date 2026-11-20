@@ -3,6 +3,7 @@ OpenFlow 1.3 Datapath & Switch Connection Manager
 """
 import asyncio
 import struct
+import time
 from typing import Dict, List, Optional, Callable, Any
 from controller.utils.logger import log
 from controller.openflow.protocol import (
@@ -10,6 +11,10 @@ from controller.openflow.protocol import (
     OFPT_HELLO,
     OFPT_ECHO_REQUEST,
     OFPT_ECHO_REPLY,
+    OFPT_ERROR,
+    OFPT_ROLE_REPLY,
+    OFPCR_ROLE_EQUAL,
+    parse_role_reply,
     OFPT_FEATURES_REQUEST,
     OFPT_FEATURES_REPLY,
     OFPT_SET_CONFIG,
@@ -22,6 +27,7 @@ from controller.openflow.protocol import (
     OFPFC_ADD,
     build_hello,
     build_echo_reply,
+    build_header,
     build_features_request,
     build_set_config,
     build_flow_mod,
@@ -31,6 +37,10 @@ from controller.openflow.protocol import (
     parse_port_status,
 )
 
+# Message types a SLAVE controller must never send (they modify the switch).
+_WRITE_MESSAGE_TYPES = {13, 14, 15, 16, 17}  # PACKET_OUT, FLOW_MOD, GROUP_MOD, PORT_MOD, TABLE_MOD
+
+
 class Datapath:
     """Represents an OpenFlow 1.3 Connected Switch Datapath."""
     def __init__(
@@ -39,7 +49,10 @@ class Datapath:
         reader: asyncio.StreamReader,
         writer: asyncio.StreamWriter,
         addr: tuple,
+        write_guard: Optional[Callable[[], bool]] = None,
     ):
+        # Returns False while this controller must not modify the switch (SLAVE).
+        self.write_guard = write_guard
         self.dpid: int = dpid
         self.sw_id: str = f"s{dpid}"
         self.reader: asyncio.StreamReader = reader
@@ -49,11 +62,17 @@ class Datapath:
         self.n_tables: int = 254
         self.capabilities: int = 0
         self.is_active: bool = True
+        self.last_seen: float = time.monotonic()
+        # Role this controller holds on the switch (EQUAL until negotiated).
+        self.role: int = OFPCR_ROLE_EQUAL
 
     async def send_msg(self, msg: bytes) -> bool:
         """Sends binary OpenFlow message to the switch."""
         if not self.is_active or self.writer.is_closing():
             return False
+        if (self.write_guard is not None and len(msg) >= 2
+                and msg[1] in _WRITE_MESSAGE_TYPES and not self.write_guard()):
+            return False  # standby controllers never program switches
         try:
             self.writer.write(msg)
             await self.writer.drain()
@@ -83,7 +102,16 @@ class SwitchManager:
         on_packet_in: Optional[Callable[[Datapath, bytes], Any]] = None,
         on_port_stats_reply: Optional[Callable[[Datapath, bytes], Any]] = None,
         on_port_status: Optional[Callable[[Datapath, bytes], Any]] = None,
+        on_role_reply: Optional[Callable[[Datapath, Any], Any]] = None,
+        on_error: Optional[Callable[[Datapath, int, int], Any]] = None,
+        keepalive_interval: float = 5.0,
+        keepalive_timeout: float = 15.0,
     ):
+        self.write_guard: Optional[Callable[[], bool]] = None
+        self.on_role_reply = on_role_reply
+        self.on_error = on_error
+        self.keepalive_interval = keepalive_interval
+        self.keepalive_timeout = keepalive_timeout
         self.datapaths: Dict[int, Datapath] = {}
         self.on_switch_connected = on_switch_connected
         self.on_switch_disconnected = on_switch_disconnected
@@ -162,7 +190,7 @@ class SwitchManager:
             await writer.drain()
             
             # Initialize Datapath
-            dp = Datapath(dpid, reader, writer, addr)
+            dp = Datapath(dpid, reader, writer, addr, write_guard=self.write_guard)
             dp.n_tables = n_tables
             dp.capabilities = capabilities
             self.datapaths[dpid] = dp
@@ -191,8 +219,12 @@ class SwitchManager:
                 except Exception as e:
                     log.error(f"Error in on_switch_connected callback: {e}")
                     
-            # 2. Main Message Read Loop
-            await self._datapath_message_loop(dp)
+            # 2. Liveness supervision + main message read loop
+            keepalive_task = asyncio.create_task(self._keepalive_loop(dp))
+            try:
+                await self._datapath_message_loop(dp)
+            finally:
+                keepalive_task.cancel()
             
         except asyncio.IncompleteReadError:
             log.info(f"Switch connection closed abruptly: {addr}")
@@ -214,6 +246,22 @@ class SwitchManager:
                             log.error(f"Error in on_switch_disconnected callback: {ex}")
                     break
 
+    async def _keepalive_loop(self, dp: Datapath):
+        """Probe the switch with ECHO_REQUEST and drop half-open sessions."""
+        xid = 0x7000
+        while dp.is_active:
+            await asyncio.sleep(self.keepalive_interval)
+            silent_for = time.monotonic() - dp.last_seen
+            if silent_for > self.keepalive_timeout:
+                log.error(
+                    f"[{dp.sw_id}] No OpenFlow traffic for {silent_for:.1f}s; "
+                    "declaring switch connection dead"
+                )
+                dp.close()
+                return
+            xid += 1
+            await dp.send_msg(build_header(OFPT_ECHO_REQUEST, 8, xid))
+
     async def _datapath_message_loop(self, dp: Datapath):
         """Continuously reads and dispatches OpenFlow messages from switch."""
         while dp.is_active:
@@ -226,6 +274,7 @@ class SwitchManager:
                     
                 payload_len = hdr.length - 8
                 payload = await dp.reader.readexactly(payload_len) if payload_len > 0 else b""
+                dp.last_seen = time.monotonic()
                 full_msg = hdr_bytes + payload
                 
                 # Dispatch message type
@@ -259,10 +308,29 @@ class SwitchManager:
                         except Exception as e:
                             log.error(f"[{dp.sw_id}] Error in port status handler: {e}")
 
+                elif hdr.msg_type == OFPT_ROLE_REPLY:
+                    reply = parse_role_reply(full_msg)
+                    if reply:
+                        dp.role = reply.role
+                        if self.on_role_reply:
+                            try:
+                                res = self.on_role_reply(dp, reply)
+                                if asyncio.iscoroutine(res):
+                                    await res
+                            except Exception as e:
+                                log.error(f"[{dp.sw_id}] Error in role reply handler: {e}")
+
                 elif hdr.msg_type == OFPT_ERROR:
                     if len(payload) >= 4:
                         err_type, err_code = struct.unpack("!HH", payload[:4])
                         log.error(f"[{dp.sw_id}] ⚠️ OpenFlow Error from switch: type={err_type}, code={err_code}, data_len={len(payload)-4}")
+                        if self.on_error:
+                            try:
+                                res = self.on_error(dp, err_type, err_code)
+                                if asyncio.iscoroutine(res):
+                                    await res
+                            except Exception as e:
+                                log.error(f"[{dp.sw_id}] Error in error handler: {e}")
                             
             except asyncio.IncompleteReadError:
                 break

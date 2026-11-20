@@ -9,6 +9,7 @@ import {
   Layers
 } from 'lucide-react';
 import { KpiCard } from '../components/metrics/KpiCard';
+import { ControllerPanel } from '../components/metrics/ControllerPanel';
 import { TopologyGraph } from '../components/topology/TopologyGraph';
 import { api } from '../services/api';
 import { TopologyData, NetworkMetrics, AlertItem, RoutingDecision } from '../types/network';
@@ -109,6 +110,7 @@ export const Dashboard: React.FC = () => {
 
         {/* Recent Events & Decisions (1 Column) */}
         <div className="space-y-6">
+          <ControllerPanel />
           {/* Recent Routing Decisions */}
           <div className="glass-panel p-5 rounded-2xl border border-cyber-border space-y-4">
             <div className="flex items-center justify-between">
@@ -133,7 +135,7 @@ export const Dashboard: React.FC = () => {
                   <div className="flex items-center space-x-2 font-mono text-slate-200">
                     <span className="text-slate-500 line-through">{dec.old_path.join('→')}</span>
                     <span className="text-purple-400 font-bold">⇒</span>
-                    <span className="text-emerald-400 font-bold">{dec.new_path.join('→')}</span>
+                    <span className="text-emerald-400 font-bold">{dec.new_path.length ? dec.new_path.join('→') : 'NO ROUTE'}</span>
                   </div>
                   <p className="text-[11px] text-slate-400">{dec.reason}</p>
                 </div>

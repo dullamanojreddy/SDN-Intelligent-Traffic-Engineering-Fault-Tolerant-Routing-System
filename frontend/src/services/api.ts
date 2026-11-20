@@ -6,7 +6,11 @@ import {
   FlowEntry,
   RoutingDecision,
   AlertItem,
-  ExperimentItem
+  ExperimentItem,
+  ControllerStatus,
+  NetworkStatus,
+  RouteVerification,
+  RouteExplanation,
 } from '../types/network';
 
 const API_BASE = '/api';
@@ -30,11 +34,18 @@ export const api = {
   getFlows: () => axios.get<FlowEntry[]>(`${API_BASE}/flows`),
   getRoutingDecisions: () => axios.get<RoutingDecision[]>(`${API_BASE}/routing/decisions`),
   getAlerts: () => axios.get<AlertItem[]>(`${API_BASE}/alerts`),
+  getControllerStatus: () => axios.get<ControllerStatus>(`${API_BASE}/controller/status`),
+  updateLink: (src: string, dst: string, data: { capacity_mbps?: number; latency_ms?: number; loss_pct?: number }) =>
+    axios.patch(`${API_BASE}/links/${encodeURIComponent(src)}/${encodeURIComponent(dst)}`, data),
+  getNetworkStatus: () => axios.get<NetworkStatus>(`${API_BASE}/network/status`),
+  reconcileNetwork: (mode: 'report' | 'adopt') => axios.post(`${API_BASE}/network/reconcile`, null, { params: { mode } }),
+  verifyRoute: (source_ip: string, dest_ip: string) =>
+    axios.get<RouteVerification>(`${API_BASE}/routing/verify`, { params: { source_ip, dest_ip } }),
   getExperiments: () => axios.get<ExperimentItem[]>(`${API_BASE}/experiments`),
   
   // Controls
-  recalculateRoute: (data: { source_ip: string; dest_ip: string; qos_class?: string }) =>
-    axios.post(`${API_BASE}/routing/recalculate`, data),
+  recalculateRoute: (data: { source_ip: string; dest_ip: string; qos_class?: string; max_candidates?: number }) =>
+    axios.post<RouteExplanation>(`${API_BASE}/routing/recalculate`, data),
   installRoute: (data: { installation_id: string; source_ip: string; dest_ip: string; path: string[] }) =>
     axios.post(`${API_BASE}/routing/install`, data),
   startTraffic: (data: { src_host: string; dst_host: string; rate_mbps: number; duration_sec: number; protocol?: string }) =>

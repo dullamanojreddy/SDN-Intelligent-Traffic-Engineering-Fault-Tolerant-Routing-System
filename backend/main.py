@@ -10,6 +10,9 @@ from backend.config.settings import settings
 from backend.database.connection import db_manager
 from backend.websocket.manager import ws_manager
 from backend.routes.system import router as system_router
+from backend.routes.controller import controller_router
+from backend.routes.network import network_router
+from backend.services.runtime import controller_monitor, orchestrator
 from backend.routes.topology import (
     topology_router,
     switches_router,
@@ -30,7 +33,11 @@ async def lifespan(app: FastAPI):
     # Startup
     logger.info("Initializing SDN-ITE FastAPI Backend...")
     await db_manager.connect()
+    await orchestrator.adopt_on_startup()
+    if settings.controller_monitor_enabled:
+        controller_monitor.start()
     yield
+    await controller_monitor.stop()
     # Shutdown
     logger.info("Shutting down SDN-ITE FastAPI Backend...")
     await db_manager.close()
@@ -53,6 +60,8 @@ app.add_middleware(
 
 # Mount REST Routers
 app.include_router(system_router)
+app.include_router(controller_router)
+app.include_router(network_router)
 app.include_router(topology_router)
 app.include_router(switches_router)
 app.include_router(links_router)

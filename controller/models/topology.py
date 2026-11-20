@@ -54,6 +54,7 @@ class LinkEdge(BaseModel):
     packet_loss_pct: float = 0.0
     status: LinkStatus = LinkStatus.NORMAL
     is_active: bool = True
+    data_plane_confirmed: Optional[bool] = None
 
 class TopologyData(BaseModel):
     switches: List[SwitchNode] = []

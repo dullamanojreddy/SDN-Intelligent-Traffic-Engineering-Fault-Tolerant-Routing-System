@@ -32,6 +32,8 @@ OFPT_MULTIPART_REQUEST = 18
 OFPT_MULTIPART_REPLY = 19
 OFPT_BARRIER_REQUEST = 20
 OFPT_BARRIER_REPLY = 21
+OFPT_ROLE_REQUEST = 24
+OFPT_ROLE_REPLY = 25
 
 # Special Port Numbers
 OFPP_MAX = 0xffffff00
@@ -183,6 +185,40 @@ def build_header(msg_type: int, length: int, xid: int = 1) -> bytes:
 def build_hello(xid: int = 1) -> bytes:
     """Constructs OFPT_HELLO message."""
     return build_header(OFPT_HELLO, 8, xid)
+
+
+# Controller roles (OpenFlow 1.3 section 6.3.4)
+OFPCR_ROLE_NOCHANGE = 0
+OFPCR_ROLE_EQUAL = 1
+OFPCR_ROLE_MASTER = 2
+OFPCR_ROLE_SLAVE = 3
+
+# Error types/codes relevant to role arbitration
+OFPET_BAD_REQUEST = 1
+OFPBRC_IS_SLAVE = 10
+OFPET_ROLE_REQUEST_FAILED = 11
+OFPRRFC_STALE = 0
+OFPRRFC_UNSUP = 1
+OFPRRFC_BAD_ROLE = 2
+
+
+def build_role_request(role: int, generation_id: int, xid: int = 1) -> bytes:
+    """Constructs OFPT_ROLE_REQUEST (role, 4 pad bytes, 64-bit generation id)."""
+    body = struct.pack("!I4xQ", role, generation_id & 0xFFFFFFFFFFFFFFFF)
+    return build_header(OFPT_ROLE_REQUEST, 8 + len(body), xid) + body
+
+
+class RoleReply(NamedTuple):
+    role: int
+    generation_id: int
+
+
+def parse_role_reply(data: bytes) -> Optional[RoleReply]:
+    """Parses a full OFPT_ROLE_REPLY message (header included)."""
+    if len(data) < 24:
+        return None
+    role, generation_id = struct.unpack("!I4xQ", data[8:24])
+    return RoleReply(role, generation_id)
 
 
 def build_echo_reply(xid: int, payload: bytes = b"") -> bytes:

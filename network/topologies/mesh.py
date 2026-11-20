@@ -10,6 +10,9 @@ H1, H2 -- S1 (100M)    S4 (100M)        S7 -- H7, H8
                  S3 (100M) ------- S6 (100M)
 """
 import os
+import signal
+import sys
+import threading
 
 from mininet.topo import Topo
 from mininet.net import Mininet
@@ -32,7 +35,8 @@ class MultiPathMeshTopo(Topo):
                 dpid=dpid,
                 protocols='OpenFlow13',
                 stp=False,
-                failMode='secure'
+                failMode='secure',
+                datapath=os.environ.get("SDN_OVS_DATAPATH", "kernel")
             )
 
         # Hosts
@@ -63,22 +67,58 @@ class MultiPathMeshTopo(Topo):
         self.addLink(switches['s5'], switches['s7'], port1=2, port2=2, bw=100, delay='5ms')
         self.addLink(switches['s6'], switches['s7'], port1=2, port2=3, bw=100, delay='5ms')
 
+def parse_controllers():
+    """Controller targets from SDN_CONTROLLERS="ip:port,ip:port" (primary first).
+
+    Falls back to the single-controller SDN_CONTROLLER_IP / port 6653. Listing
+    several controllers makes every switch connect to all of them; the
+    controllers arbitrate MASTER/SLAVE roles over OpenFlow.
+    """
+    raw = os.environ.get("SDN_CONTROLLERS")
+    if not raw:
+        return [(os.environ.get("SDN_CONTROLLER_IP", "127.0.0.1"), 6653)]
+    targets = []
+    for item in raw.split(","):
+        host, _, port = item.strip().rpartition(":")
+        targets.append((host or "127.0.0.1", int(port or 6653)))
+    return targets
+
+
 def run():
     setLogLevel('info')
     topo = MultiPathMeshTopo()
-    controller_ip = os.environ.get("SDN_CONTROLLER_IP", "127.0.0.1")
+    datapath = os.environ.get("SDN_OVS_DATAPATH", "kernel")   # "user" where no OVS kernel module exists
     net = Mininet(
         topo=topo,
         switch=OVSSwitch,
-        controller=RemoteController('c0', ip=controller_ip, port=6653),
+        controller=None,
         link=TCLink,
         autoSetMacs=True
     )
+    for index, (ip, port) in enumerate(parse_controllers()):
+        net.addController(RemoteController(f'c{index}', ip=ip, port=port))
     net.start()
     info("*** Multi-Path Mesh Network Started with 7 Open vSwitches & OpenFlow 1.3\n")
-    info("*** Spanning Tree Protocol (STP) is ENABLED on switches s1-s7 to prevent broadcast storms.\n")
-    info("*** NOTE: Wait ~30 seconds for STP listening/learning convergence before running 'pingall'.\n")
-    CLI(net)
+    info("*** Controllers: %s\n" % ", ".join(f"{h}:{p}" for h, p in parse_controllers()))
+
+    agent_port = int(os.environ.get("SDN_AGENT_PORT", "0"))
+    if agent_port:
+        # Import after Mininet so the real package wins over the repo's IDE stub.
+        sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
+        import agent
+        token = os.environ.get("NETWORK_AGENT_TOKEN") or os.environ.get("CONTROLLER_API_TOKEN", "")
+        server = agent.serve(agent.NetworkAgent(net, datapath=datapath), "0.0.0.0", agent_port, token)
+        info("*** Network agent listening on :%d\n" % agent_port)
+
+    if os.environ.get("SDN_HEADLESS") == "1":
+        info("*** Headless mode: waiting for SIGTERM/SIGINT\n")
+        stop = threading.Event()
+        signal.signal(signal.SIGTERM, lambda *_: stop.set())
+        signal.signal(signal.SIGINT, lambda *_: stop.set())
+        stop.wait()
+    else:
+        info("*** NOTE: Switches run OpenFlow secure mode; the controller programs all flows.\n")
+        CLI(net)
     net.stop()
 
 if __name__ == '__main__':

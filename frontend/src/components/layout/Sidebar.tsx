@@ -3,11 +3,17 @@ import { NavLink } from 'react-router-dom';
 import {
   LayoutDashboard,
   GitFork,
+  Network,
+  Table2,
+  Bell,
 } from 'lucide-react';
 
 const NAV_ITEMS = [
   { name: 'Dashboard', path: '/', icon: LayoutDashboard },
+  { name: 'Topology Editor', path: '/topology', icon: Network },
   { name: 'Routing Decisions', path: '/routing', icon: GitFork },
+  { name: 'Flow Tables', path: '/flows', icon: Table2 },
+  { name: 'Alerts', path: '/alerts', icon: Bell },
 ];
 
 export const Sidebar: React.FC = () => (

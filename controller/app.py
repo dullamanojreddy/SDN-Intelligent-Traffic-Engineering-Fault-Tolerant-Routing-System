@@ -29,12 +29,15 @@ from controller.openflow.protocol import (
 )
 from controller.openflow.switch_manager import SwitchManager, Datapath
 from controller.openflow.flow_manager import FlowManager
+from controller.openflow.protocol import ETH_TYPE_IP, ETH_TYPE_ARP
 from controller.openflow.packet_handler import PacketHandler
 from controller.openflow.stats_manager import StatsManager
 from controller.topology.discovery import TopologyDiscovery
 from controller.topology.state_bridge import reset_link_states, set_link_state
 from controller.routing.route_installer import RouteInstallationService
 from controller.management_api import ControllerManagementAPI
+from controller.ha import HAManager
+from controller.topology.sync import apply_snapshot, export_links, validate_snapshot
 
 
 class SDNTrafficEngineApp:
@@ -65,7 +68,21 @@ class SDNTrafficEngineApp:
             on_packet_in=self._on_packet_in,
             on_port_stats_reply=self._on_port_stats_reply,
             on_port_status=self._on_port_status,
+            on_error=self._on_switch_error,
+            on_role_reply=self._on_role_reply,
         )
+        self.ha = HAManager(
+            self.switch_manager,
+            controller_id=settings.controller_id,
+            preferred=settings.preferred,
+            peer_url=settings.peer_api_url or None,
+            token=settings.api_token,
+            interval=settings.ha_interval_sec,
+            failure_threshold=settings.ha_failure_threshold,
+            recovery_threshold=settings.ha_recovery_threshold,
+            on_promoted=self._on_promoted,
+        )
+        self.switch_manager.write_guard = lambda: self.ha.is_master
         self.flow_manager = FlowManager(self.switch_manager)
         self.topology_discovery = TopologyDiscovery(
             network_graph=self.network_graph,
@@ -88,7 +105,16 @@ class SDNTrafficEngineApp:
             router=self.router,
             topology_discovery=self.topology_discovery,
             event_manager=self.event_manager,
+            seed_hosts=settings.seed_mesh,
         )
+
+        # Operator-managed topology versioning and observed port failures
+        self.topology_version = 0
+        self.port_down_links: set = set()
+        self.started_at = time.time()
+        # Route reconciles must never overlap: a slower run's stale-rule cleanup would
+        # delete rules a newer run just installed.
+        self._reconcile_lock = asyncio.Lock()
 
         # Datapath and Flow references
         self.datapaths = self.switch_manager.datapaths
@@ -112,8 +138,15 @@ class SDNTrafficEngineApp:
     def _on_switch_connected(self, dp: Datapath):
         """Called when an OpenFlow 1.3 switch finishes handshake."""
         self.network_graph.add_switch(dp.sw_id)
+        # A (re)connected switch starts with an empty table apart from the
+        # table-miss rule, so cached rules for it can no longer be trusted.
+        self.flow_manager.forget_switch(dp.sw_id)
         log.info(f"Connected to Switch {dp.sw_id} ({dp.addr})")
-        expected_switches = {f"s{i}" for i in range(1, 8)}
+        try:
+            asyncio.get_running_loop().create_task(self.ha.on_switch_connected(dp))
+        except RuntimeError:
+            pass  # no running loop (unit tests calling the handler directly)
+        expected_switches = self._expected_switches()
         connected_switches = set(self.switch_manager.datapaths)
         if expected_switches.issubset({f"s{dpid}" for dpid in connected_switches}):
             # A complete fresh Mininet session supersedes link observations
@@ -135,10 +168,24 @@ class SDNTrafficEngineApp:
     def _on_switch_disconnected(self, dp: Datapath):
         """Called when a switch disconnects."""
         log.warning(f"Switch Disconnected: {dp.sw_id}")
+        self.flow_manager.forget_switch(dp.sw_id)
         if self.event_manager:
             self.event_manager.emit(
                 "switch_disconnected", {"switch": dp.sw_id, "dpid": dp.dpid}
             )
+
+    async def _on_role_reply(self, dp: Datapath, reply):
+        await self.ha.on_role_reply(dp, reply)
+
+    def _on_switch_error(self, dp: Datapath, err_type: int, err_code: int):
+        self.ha.on_error(dp, err_type, err_code)
+
+    async def _on_promoted(self):
+        """After becoming MASTER, rebuild forwarding state: the registry of a
+        former slave does not reflect what the switches really hold."""
+        for dp in list(self.switch_manager.datapaths.values()):
+            self.flow_manager.forget_switch(dp.sw_id)
+        await self._recover_host_routes("controller-promoted")
 
     async def _on_packet_in(self, dp: Datapath, raw_data: bytes):
         """Dispatches incoming Packet-In messages."""
@@ -163,6 +210,7 @@ class SDNTrafficEngineApp:
                 if self.event_manager:
                     self.event_manager.emit("link_failure", ev.model_dump() if hasattr(ev, 'model_dump') else ev.__dict__)
                 failed_link_id = ev.data.get("link_id", "")
+                self.port_down_links.add(failed_link_id)
                 set_link_state(failed_link_id, False)
                 if "-" in failed_link_id:
                     src_dpid, dst_dpid = failed_link_id.split("-", 1)
@@ -174,6 +222,7 @@ class SDNTrafficEngineApp:
             link_restored = False
             for u, v, d in self.network_graph.graph.edges(data=True):
                 if (u == dp.sw_id and d.get("src_port") == status.port_no) or (v == dp.sw_id and d.get("dst_port") == status.port_no):
+                    self.port_down_links.discard(f"{u}-{v}")
                     self.network_graph.update_link_metrics(u, v, utilization_pct=d.get("utilization_pct", 0.0), is_active=True)
                     set_link_state(f"{u}-{v}", True)
                     link_restored = True
@@ -324,29 +373,48 @@ class SDNTrafficEngineApp:
             self._recover_host_routes(failed_link_id)
         )
 
-    async def _recover_host_routes(self, failed_link_id: str):
-        """Reinstall valid routes for all known host destinations."""
+    def _expected_switches(self) -> set:
+        """Mesh switches that still exist in the topology model.
 
+        Operator-added switches are model-level only and cannot be required to
+        connect; operator-removed mesh switches are no longer expected.
+        """
+        mesh = {f"s{i}" for i in range(1, 8)}
+        return mesh & set(self.network_graph.graph.nodes)
+
+    async def _recover_host_routes(self, failed_link_id: str):
+        """Reinstall valid routes for all known host pairs and drop stale ones.
+
+        Serialised; each run reads the graph when it *starts*, so the last run
+        always reflects the latest topology.
+        """
+        async with self._reconcile_lock:
+            await self._recover_host_routes_locked(failed_link_id)
+
+    async def _recover_host_routes_locked(self, failed_link_id: str):
         hosts = dict(self.packet_handler.host_ip_table)
+        desired: set = set()
 
         for dst_ip, (dst_sw, dst_port, dst_mac) in hosts.items():
-
             for src_ip, (src_sw, src_port, src_mac) in hosts.items():
-
                 if src_ip == dst_ip:
                     continue
 
                 if src_sw == dst_sw:
+                    dp = self.switch_manager.get_datapath_by_name(dst_sw)
+                    if dp:
+                        for eth_type, key in ((ETH_TYPE_IP, "ipv4_dst"), (ETH_TYPE_ARP, "arp_tpa")):
+                            match = {"eth_type": eth_type, key: dst_ip}
+                            await self.flow_manager.install_flow(
+                                dp, match, out_port=dst_port, priority=100, idle_timeout=300, replace=True
+                            )
+                            desired.add(FlowManager.flow_id_for(dst_sw, match, 100))
                     continue
 
-                path, cost = self.router.calculate_shortest_path(
-                    src_sw, dst_sw
-                )
+                path, cost = self.router.calculate_shortest_path(src_sw, dst_sw)
 
                 if not path or len(path) < 2:
-                    log.warning(
-                        f"No recovery path: {src_ip} -> {dst_ip}"
-                    )
+                    log.warning(f"No recovery path: {src_ip} -> {dst_ip}")
                     continue
 
                 hops = self.packet_handler._build_port_hops(
@@ -363,22 +431,97 @@ class SDNTrafficEngineApp:
                     src_mac=src_mac,
                     dst_mac=dst_mac,
                     priority=100,
-                    idle_timeout=300
+                    idle_timeout=300,
+                    replace=True,
                 )
+                for sw_id, _, _ in hops:
+                    for eth_type, key in ((ETH_TYPE_IP, "ipv4_dst"), (ETH_TYPE_ARP, "arp_tpa")):
+                        desired.add(FlowManager.flow_id_for(sw_id, {"eth_type": eth_type, key: dst_ip}, 100))
 
                 log.info(
                     f"Recovery route: {src_ip} -> {dst_ip} "
                     f"via {' -> '.join(path)}"
                 )
 
+        removed = await self._remove_stale_routes(desired)
+
         if self.event_manager:
             self.event_manager.emit(
                 "failover_recovered",
                 {
                     "failed_link": failed_link_id,
-                    "status": "routes_recalculated"
+                    "status": "routes_recalculated",
+                    "stale_rules_removed": removed,
                 }
             )
+
+    async def _remove_stale_routes(self, desired: set) -> int:
+        """Delete destination rules (priority 100) no longer on any computed route."""
+        stale = [
+            flow_id for flow_id, entry in list(self.flow_manager.active_flows.items())
+            if entry.get("priority") == 100 and flow_id not in desired
+        ]
+        for flow_id in stale:
+            await self.flow_manager.delete_cached_flow(flow_id)
+        if stale:
+            log.info(f"Removed {len(stale)} stale route rules after recalculation")
+        return len(stale)
+
+    # --------------------------------------------------------------------------
+    # Operator topology management (driven by the backend over the mgmt API)
+    # --------------------------------------------------------------------------
+    def export_state(self) -> Dict[str, Any]:
+        """Snapshot of live controller state for the backend."""
+        connected = {dp.sw_id for dp in self.switch_manager.datapaths.values()}
+        per_switch: Dict[str, int] = {}
+        for entry in self.flow_manager.active_flows.values():
+            per_switch[entry["switch"]] = per_switch.get(entry["switch"], 0) + 1
+        return {
+            "controller_id": settings.controller_id,
+            "uptime_sec": round(time.time() - self.started_at, 2),
+            "topology_version": self.topology_version,
+            "switches": [
+                {"dpid": n, "connected": n in connected, "active_flows": per_switch.get(n, 0)}
+                for n in self.network_graph.graph.nodes
+            ],
+            "links": export_links(self.network_graph),
+            "hosts": [
+                {"ip": ip, "mac": mac, "switch": sw, "port": port}
+                for ip, (sw, port, mac) in self.packet_handler.host_ip_table.items()
+            ],
+            "flow_count": len(self.flow_manager.active_flows),
+            "ha": self.ha.describe(),
+        }
+
+    def export_flows(self) -> List[Dict[str, Any]]:
+        return [
+            {"flow_id": flow_id, **{k: v for k, v in entry.items() if k != "installed_at"}}
+            for flow_id, entry in self.flow_manager.active_flows.items()
+        ]
+
+    async def apply_topology_snapshot(self, snapshot: Dict[str, Any]) -> Dict[str, Any]:
+        """Apply an operator snapshot, then reconcile routes against it.
+
+        Raises SnapshotError for malformed input and ValueError("stale") when the
+        version is older than what is already applied.
+        """
+        validate_snapshot(snapshot)
+        version = snapshot["version"]
+        if version < self.topology_version:
+            raise ValueError(
+                f"stale snapshot version {version} < applied {self.topology_version}"
+            )
+        summary = apply_snapshot(self, snapshot)
+        self.topology_version = snapshot["version"]
+        await self._recover_host_routes("topology-update")
+        summary["topology_version"] = self.topology_version
+        if self.event_manager:
+            self.event_manager.emit(
+                "topology_updated",
+                {"version": self.topology_version,
+                 **{k: v for k, v in summary.items() if isinstance(v, list)}},
+            )
+        return summary
 
     # --------------------------------------------------------------------------
     # Topology Initialization & Startup
@@ -421,7 +564,7 @@ class SDNTrafficEngineApp:
             try:
                 await asyncio.sleep(0.2)
                 connected_switches = set(dp.sw_id for dp in self.switch_manager.datapaths.values())
-                expected_switches = {f"s{i}" for i in range(1, 8)}
+                expected_switches = self._expected_switches()
                 if (
                     expected_switches.issubset(connected_switches)
                     and time.monotonic() - last_install >= 5.0
@@ -446,7 +589,12 @@ class SDNTrafficEngineApp:
     async def run(self, host: str = "0.0.0.0", port: int = 6653):
         """Runs the asynchronous OpenFlow 1.3 controller."""
         # Initialize default baseline topology
-        self.initialize_mesh_topology()
+        if settings.seed_mesh:
+            log.warning(
+                "CONTROLLER_SEED_MESH is on: the built-in demo 7-switch mesh and hosts 10.0.0.1/2/7/8 are "
+                "assumed until the backend pushes a topology snapshot. Set CONTROLLER_SEED_MESH=false "
+                "for any other network.")
+            self.initialize_mesh_topology()
         
         # Start TCP server
         await self.switch_manager.start_server(host=host, port=port)
@@ -454,6 +602,7 @@ class SDNTrafficEngineApp:
         log.info("Controller management API listening on port %s", settings.rest_port)
         # Start LLDP Discovery loop
         self.topology_discovery.start()
+        self.ha.start()
         # Start Statistics Poller
         self.stats_manager.start()
         # Schedule proactive route provisioning worker
@@ -468,6 +617,7 @@ class SDNTrafficEngineApp:
             log.info("Stopping SDN-ITE Controller Engine...")
         finally:
             self.topology_discovery.stop()
+            self.ha.stop()
             self.stats_manager.stop()
             await self.management_api.stop()
             await self.switch_manager.stop_server()
@@ -476,6 +626,6 @@ class SDNTrafficEngineApp:
 if __name__ == "__main__":
     app = SDNTrafficEngineApp()
     try:
-        asyncio.run(app.run(host="0.0.0.0", port=6653))
+        asyncio.run(app.run(host="0.0.0.0", port=settings.of_port))
     except KeyboardInterrupt:
         log.info("Controller exited cleanly.")

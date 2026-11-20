@@ -49,7 +49,8 @@ class NetworkGraph:
             loss_pct=loss_pct,
             utilization_pct=utilization_pct,
             is_active=is_active,
-            status=LinkStatus.NORMAL if is_active else LinkStatus.FAILED
+            status=LinkStatus.NORMAL if is_active else LinkStatus.FAILED,
+            data_plane_confirmed=True,
         )
         
     def remove_link(self, src_dpid: str, dst_dpid: str):
@@ -91,9 +92,10 @@ class NetworkGraph:
         self.update_link_metrics(src_dpid, dst_dpid, utilization_pct=utilization_pct)
 
     def update_link_packet_loss(self, src_dpid: str, dst_dpid: str, loss_pct: float):
+        """Record *measured* drop rate. The configured loss (``loss_pct``, e.g. a netem
+        setting chosen by the operator) is kept separately; routing uses the larger."""
         if self.graph.has_edge(src_dpid, dst_dpid):
-            curr_util = self.graph[src_dpid][dst_dpid].get("utilization_pct", 0.0)
-            self.update_link_metrics(src_dpid, dst_dpid, utilization_pct=curr_util, loss_pct=loss_pct)
+            self.graph[src_dpid][dst_dpid]["measured_loss_pct"] = loss_pct
 
     def get_active_graph(self) -> nx.DiGraph:
         """Returns a subgraph containing only active, operational links."""

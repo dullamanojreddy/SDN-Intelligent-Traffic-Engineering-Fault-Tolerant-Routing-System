@@ -64,6 +64,7 @@ class RouteInstallationService:
                     priority=int(request.get("priority", 100)),
                     idle_timeout=int(request.get("idle_timeout", 300)),
                     cookie=int(request.get("cookie", 0)),
+                    replace=True,
                 )
                 if not ok:
                     result["status"] = "PARTIALLY_INSTALLED"

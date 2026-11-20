@@ -10,6 +10,9 @@ from controller.openflow.protocol import (
     ETH_TYPE_IP,
     ETH_TYPE_ARP,
     ETH_TYPE_LLDP,
+    OFPFC_ADD,
+    build_flow_mod,
+    build_match,
     build_action_output,
     build_packet_out,
     parse_packet_in,
@@ -42,6 +45,7 @@ class PacketHandler:
         router: DijkstraRouter,
         topology_discovery: TopologyDiscovery,
         event_manager: Optional[EventManager] = None,
+        seed_hosts: bool = True,
     ):
         self.switch_manager = switch_manager
         self.flow_manager = flow_manager
@@ -57,7 +61,8 @@ class PacketHandler:
         self.host_ip_table: Dict[str, Tuple[str, int, str]] = {}
 
         # Pre-seed standard mesh endpoints for instantaneous zero-drop routing
-        self._seed_default_hosts()
+        if seed_hosts:
+            self._seed_default_hosts()
 
     def _seed_default_hosts(self):
         """Pre-seeds standard Mininet mesh topology hosts."""
@@ -364,8 +369,8 @@ class PacketHandler:
                     instructions=b"",
                 )
                 await dp.send_msg(ipv6_mod)
-            except Exception:
-                pass
+            except Exception as exc:
+                log.warning(f"[{dp.sw_id}] Could not install IPv6 loop-guard rule: {exc}")
 
         # 2. Pre-install shortest path forwarding for default mesh hosts
         hosts = list(self.host_ip_table.items())
@@ -377,10 +382,10 @@ class PacketHandler:
                     dp = self.switch_manager.get_datapath_by_name(src_sw)
                     if dp:
                         await self.flow_manager.install_flow(
-                            dp, {"eth_type": ETH_TYPE_IP, "ipv4_dst": dst_ip}, out_port=dst_port, priority=100
+                            dp, {"eth_type": ETH_TYPE_IP, "ipv4_dst": dst_ip}, out_port=dst_port, priority=100, replace=True
                         )
                         await self.flow_manager.install_flow(
-                            dp, {"eth_type": ETH_TYPE_ARP, "arp_tpa": dst_ip}, out_port=dst_port, priority=100
+                            dp, {"eth_type": ETH_TYPE_ARP, "arp_tpa": dst_ip}, out_port=dst_port, priority=100, replace=True
                         )
                 else:
                     path_fwd, _ = self.router.calculate_shortest_path(src_sw, dst_sw)
@@ -395,5 +400,6 @@ class PacketHandler:
                             dst_mac=dst_mac,
                             priority=100,
                             idle_timeout=300,
+                            replace=True,
                         )
         log.info("Proactive baseline OpenFlow forwarding rules installed for mesh endpoints.")

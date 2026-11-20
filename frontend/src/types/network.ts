@@ -41,6 +41,7 @@ export interface LinkEdge {
   packet_loss_pct: number;
   status: LinkStatus;
   is_active: boolean;
+  data_plane_confirmed?: boolean | null;
 }
 
 export interface TopologyData {
@@ -48,6 +49,78 @@ export interface TopologyData {
   hosts: HostNode[];
   links: LinkEdge[];
   timestamp: string;
+}
+
+export interface ControllerEvent {
+  type: string;
+  severity: string;
+  message: string;
+  timestamp: string;
+}
+
+export interface ControllerStatus {
+  status: 'UP' | 'DOWN' | 'UNKNOWN';
+  connected: boolean;
+  active_url: string;
+  active_role: string;
+  controller_id?: string | null;
+  consecutive_failures: number;
+  failure_threshold: number;
+  last_error?: string | null;
+  last_heartbeat?: string | null;
+  failover_count: number;
+  ha?: { enabled: boolean; role: string; switch_roles?: Record<string, string> } | null;
+  outage_count: number;
+  pending_sync: boolean;
+  synced_version?: number | null;
+  current_version: number;
+  endpoints: Array<{ url: string; role: string; active: boolean; healthy: boolean | null; error?: string | null; of_role?: string | null }>;
+  history: ControllerEvent[];
+}
+
+export interface NetworkStatus {
+  agent_enabled: boolean;
+  reachable: boolean;
+  in_sync: boolean | null;
+  drift: Array<{ kind: string; name: string; problem: string }>;
+  note?: string;
+  error?: string;
+}
+
+export interface RouteVerification {
+  status: 'VERIFIED' | 'DIFFERENT_PATH' | 'MISSING_RULES' | 'BROKEN' | 'UNAVAILABLE';
+  verified: boolean;
+  reason?: string;
+  expected_path?: string[] | null;
+  installed_path?: string[];
+  discrepancies?: string[];
+  hops?: Array<{
+    switch: string;
+    expected_out_port: number | null;
+    installed_out_port: number | null;
+    priority: number | null;
+    packets: number | null;
+    status: string;
+  }>;
+}
+
+export interface MutationResult {
+  sync_status: 'SYNCED' | 'PENDING_CONTROLLER_UNAVAILABLE' | 'REJECTED';
+  topology_version: number;
+  route_changes: RoutingDecision[];
+}
+
+export interface RouteExplanation {
+  status: 'SUCCESS' | 'NO_ROUTE';
+  source_switch: string;
+  dest_switch: string;
+  weights: { latency: number; utilization: number; packet_loss: number; capacity?: number };
+  formula: string;
+  excluded_links: Array<{ src: string; dst: string; reason: string }>;
+  candidate_paths: RoutingCandidate[];
+  selected_path: string[] | null;
+  selected_cost: number | null;
+  explanation: string;
 }
 
 export interface SystemStatus {
@@ -86,6 +159,7 @@ export interface FlowEntry {
   match: {
     ipv4_src?: string;
     ipv4_dst?: string;
+    arp_tpa?: string;
     ip_proto?: number;
     in_port?: number;
   };
@@ -97,6 +171,7 @@ export interface FlowEntry {
   byte_count: number;
   duration_sec: number;
   status: string;
+  source?: string;
 }
 
 export interface RoutingDecision {
@@ -121,6 +196,7 @@ export interface RoutingCandidate {
   latency_ms: number;
   max_utilization_pct: number;
   total_loss_pct: number;
+  hops?: number;
   rank?: number;
   selected?: boolean;
   decision?: string;
@@ -131,6 +207,7 @@ export interface RoutingCandidate {
     latency_ms: number;
     utilization_pct: number;
     packet_loss_pct: number;
+    capacity_mbps?: number;
     cost: number;
   }>;
 }

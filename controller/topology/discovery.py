@@ -65,7 +65,11 @@ class TopologyDiscovery:
         """Sends LLDP probe packets out of all active switch ports."""
         for dpid, dp in list(self.switch_manager.datapaths.items()):
             # By default probe ports 1..16 if specific port list is not yet populated
-            ports_to_probe = list(dp.ports.keys()) if dp.ports else list(range(1, 8))
+            if not self._may_probe(dp):
+                continue
+            # Known ports (including operator/agent-added ones) plus the default range.
+            known = {d.get("src_port") for u, _, d in self.network_graph.graph.edges(data=True) if u == dp.sw_id}
+            ports_to_probe = sorted(set(dp.ports.keys() if dp.ports else range(1, 8)) | {p for p in known if p})
             for port_no in ports_to_probe:
                 lldp_pkt = build_lldp_packet(dpid, port_no)
                 actions = build_action_output(port_no)
@@ -76,6 +80,11 @@ class TopologyDiscovery:
                     data=lldp_pkt,
                 )
                 await dp.send_msg(pkt_out)
+
+    @staticmethod
+    def _may_probe(dp: Datapath) -> bool:
+        guard = getattr(dp, "write_guard", None)
+        return guard is None or guard()
 
     def handle_lldp_packet(self, dst_dp: Datapath, in_port: int, lldp_payload: bytes):
         """Processes received LLDP packet to discover an inter-switch link."""
@@ -89,6 +98,11 @@ class TopologyDiscovery:
         dst_port = in_port
         
         link_tuple = (src_sw, src_port, dst_sw, dst_port)
+        # LLDP arriving over an existing edge is proof the link exists in the data plane.
+        if self.network_graph.graph.has_edge(src_sw, dst_sw):
+            self.network_graph.graph[src_sw][dst_sw]["data_plane_confirmed"] = True
+        if self.network_graph.graph.has_edge(dst_sw, src_sw):
+            self.network_graph.graph[dst_sw][src_sw]["data_plane_confirmed"] = True
         if link_tuple not in self.inter_switch_links:
             self.inter_switch_links.add(link_tuple)
             
@@ -96,13 +110,15 @@ class TopologyDiscovery:
             self.network_graph.add_switch(src_sw)
             self.network_graph.add_switch(dst_sw)
             
-            # Add bidirectional link to NetworkGraph
-            self.network_graph.add_link(
-                src_sw, dst_sw, src_port, dst_port, capacity_mbps=100.0, latency_ms=5.0
-            )
-            self.network_graph.add_link(
-                dst_sw, src_sw, dst_port, src_port, capacity_mbps=100.0, latency_ms=5.0
-            )
+            # Add bidirectional link to NetworkGraph. Links already present
+            # (pre-seeded mesh or operator-edited) keep their properties;
+            # discovery only confirms them against the data plane.
+            for a, b, pa, pb in ((src_sw, dst_sw, src_port, dst_port),
+                                 (dst_sw, src_sw, dst_port, src_port)):
+                if self.network_graph.graph.has_edge(a, b):
+                    self.network_graph.graph[a][b]["data_plane_confirmed"] = True
+                else:
+                    self.network_graph.add_link(a, b, pa, pb, capacity_mbps=100.0, latency_ms=5.0)
             
             log.info(f"Discovered Link: {src_sw}:p{src_port} <---> {dst_sw}:p{dst_port}")
             if self.event_manager:

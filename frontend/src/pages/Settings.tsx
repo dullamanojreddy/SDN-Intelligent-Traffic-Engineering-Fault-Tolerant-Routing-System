@@ -10,10 +10,9 @@ export const Settings: React.FC = () => {
   const [lossWeight, setLossWeight] = useState('0.2');
   const [saved, setSaved] = useState(false);
 
-  const handleSave = () => {
-    setSaved(true);
-    setTimeout(() => setSaved(false), 2000);
-  };
+  // These values are controller/backend environment variables (see .env.example);
+  // the UI cannot change them at runtime, so saving is intentionally unavailable.
+  const handleSave = () => undefined;
 
   return (
     <div className="space-y-6 max-w-4xl">
@@ -90,10 +89,12 @@ export const Settings: React.FC = () => {
         <div className="pt-2">
           <button
             onClick={handleSave}
-            className="bg-purple-600 hover:bg-purple-500 text-white font-semibold px-5 py-2.5 rounded-xl flex items-center space-x-2 transition shadow-lg shadow-purple-600/30 text-xs"
+            disabled
+            title="Configuration is read from environment variables and cannot be changed at runtime"
+            className="opacity-50 cursor-not-allowed bg-purple-600 hover:bg-purple-500 text-white font-semibold px-5 py-2.5 rounded-xl flex items-center space-x-2 transition shadow-lg shadow-purple-600/30 text-xs"
           >
             <Save className="w-4 h-4" />
-            <span>{saved ? 'Settings Saved!' : 'Apply Global Configuration'}</span>
+            <span>{saved ? 'Settings Saved!' : 'Read-only: set via environment variables'}</span>
           </button>
         </div>
       </div>
