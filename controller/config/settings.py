@@ -8,6 +8,7 @@ class ControllerSettings(BaseModel):
     # Network & OF
     of_port: int = Field(default=6653, description="OpenFlow listen port")
     rest_port: int = Field(default=8080, description="Controller REST API port")
+    api_token: str = Field(default="", description="Token for controller management API")
     
     # Traffic Monitoring
     monitor_interval: float = Field(default=2.0, description="Monitoring loop cycle in seconds")
@@ -40,4 +41,5 @@ settings = ControllerSettings(
     latency_weight=float(os.getenv("LATENCY_WEIGHT", 0.4)),
     utilization_weight=float(os.getenv("UTILIZATION_WEIGHT", 0.4)),
     loss_weight=float(os.getenv("LOSS_WEIGHT", 0.2)),
+    api_token=os.getenv("CONTROLLER_API_TOKEN", ""),
 )

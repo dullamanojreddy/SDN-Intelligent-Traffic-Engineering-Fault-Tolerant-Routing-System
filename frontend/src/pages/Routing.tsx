@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { api } from '../services/api';
-import { AlertItem, RoutingDecision } from '../types/network';
-import { GitFork, ArrowRight, Zap, Scale, CheckCircle2 } from 'lucide-react';
+import { AlertItem, RoutingCandidate, RoutingDecision } from '../types/network';
+import { GitFork, ArrowRight, Zap, Scale, CheckCircle2, UploadCloud } from 'lucide-react';
 
 export const Routing: React.FC = () => {
   const [decisions, setDecisions] = useState<RoutingDecision[]>([]);
@@ -9,7 +9,10 @@ export const Routing: React.FC = () => {
   const [srcIp, setSrcIp] = useState('10.0.0.1');
   const [dstIp, setDstIp] = useState('10.0.0.8');
   const [qosClass, setQosClass] = useState('VIDEO');
-  const [candidatePaths, setCandidatePaths] = useState<any[]>([]);
+  const [candidatePaths, setCandidatePaths] = useState<RoutingCandidate[]>([]);
+  const [explanation, setExplanation] = useState('');
+  const [routeError, setRouteError] = useState('');
+  const [installation, setInstallation] = useState<any>(null);
 
   useEffect(() => {
     Promise.all([api.getRoutingDecisions(), api.getAlerts()])
@@ -21,12 +24,36 @@ export const Routing: React.FC = () => {
   }, []);
 
   const handleCompute = async () => {
-    const res = await api.recalculateRoute({
-      source_ip: srcIp,
-      dest_ip: dstIp,
-      qos_class: qosClass
-    });
-    setCandidatePaths(res.data.candidate_paths || []);
+    try {
+      setRouteError('');
+      const res = await api.recalculateRoute({
+        source_ip: srcIp,
+        dest_ip: dstIp,
+        qos_class: qosClass
+      });
+      setCandidatePaths(res.data.candidate_paths || []);
+      setExplanation(res.data.explanation || '');
+      setInstallation(null);
+    } catch (error: any) {
+      setCandidatePaths([]);
+      setExplanation('');
+      setRouteError(error.response?.data?.detail || 'Unable to calculate a route');
+    }
+  };
+
+  const handleInstall = async (path: string[]) => {
+    try {
+      setRouteError('');
+      const result = await api.installRoute({
+        installation_id: `install-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        source_ip: srcIp,
+        dest_ip: dstIp,
+        path,
+      });
+      setInstallation(result.data);
+    } catch (error: any) {
+      setInstallation(error.response?.data || { status: 'FAILED', failure_details: error.response?.data?.detail || 'Installation failed' });
+    }
   };
 
   return (
@@ -90,29 +117,38 @@ export const Routing: React.FC = () => {
         {candidatePaths.length > 0 && (
           <div className="mt-4 space-y-2">
             <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wider">Candidate Evaluated Paths:</h4>
+            {explanation && <p className="rounded-xl border border-purple-500/30 bg-purple-950/20 p-3 text-xs text-purple-200">{explanation}</p>}
             <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
               {candidatePaths.map((p, idx) => (
                 <div
                   key={idx}
                   className={`p-3.5 rounded-xl border text-xs space-y-2 ${
-                    idx === 0 ? 'bg-purple-950/20 border-purple-500/40 text-purple-200' : 'bg-[#0E1017] border-cyber-border text-slate-300'
+                    p.selected ? 'bg-purple-950/20 border-purple-500/40 text-purple-200' : 'bg-[#0E1017] border-cyber-border text-slate-300'
                   }`}
                 >
                   <div className="flex justify-between items-center font-bold">
                     <span>Rank #{idx + 1} Path</span>
-                    {idx === 0 && <span className="text-[10px] text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded-full border border-emerald-500/20">Optimal</span>}
+                    {p.selected && <span className="text-[10px] text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded-full border border-emerald-500/20">Selected</span>}
                   </div>
                   <div className="font-mono text-xs">{p.path.join(' → ')}</div>
                   <div className="text-[11px] text-slate-400 space-y-0.5 font-mono">
                     <div>Composite Cost: {p.cost}</div>
                     <div>Est. Latency: {p.latency_ms} ms</div>
                     <div>Peak Util: {p.max_utilization_pct}%</div>
+                    <div className="text-slate-500">{p.decision}</div>
                   </div>
+                  {p.selected && <button onClick={() => handleInstall(p.path)} className="button-secondary mt-2"><UploadCloud className="w-3 h-3" /> Install selected route</button>}
                 </div>
               ))}
             </div>
           </div>
         )}
+        {routeError && <p className="mt-4 text-xs text-red-400">{routeError}</p>}
+        {installation && <div className="rounded-xl border border-cyber-border bg-[#0E1017] p-3 text-xs">
+          <div className="font-semibold text-slate-200">Installation: <span className={installation.status === 'INSTALLED' ? 'text-amber-400' : installation.status === 'VERIFIED' ? 'text-emerald-400' : 'text-red-400'}>{installation.status}</span></div>
+          <div className="text-slate-400 mt-1">Flow verification: {installation.verification_status}</div>
+          {installation.failure_details && <div className="text-red-400 mt-1">{installation.failure_details}</div>}
+        </div>}
       </div>
 
       <div className="glass-panel p-5 rounded-2xl border border-cyber-border space-y-3">

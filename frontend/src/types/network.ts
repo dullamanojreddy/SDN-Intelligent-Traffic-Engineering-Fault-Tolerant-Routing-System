@@ -115,6 +115,26 @@ export interface RoutingDecision {
   qos_class: string;
 }
 
+export interface RoutingCandidate {
+  path: string[];
+  cost: number;
+  latency_ms: number;
+  max_utilization_pct: number;
+  total_loss_pct: number;
+  rank?: number;
+  selected?: boolean;
+  decision?: string;
+  cost_breakdown?: Record<string, number>;
+  edge_metrics?: Array<{
+    src: string;
+    dst: string;
+    latency_ms: number;
+    utilization_pct: number;
+    packet_loss_pct: number;
+    cost: number;
+  }>;
+}
+
 export interface AlertItem {
   timestamp: string;
   type: string;

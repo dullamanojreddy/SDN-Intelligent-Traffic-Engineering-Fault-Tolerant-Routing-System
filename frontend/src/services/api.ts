@@ -17,6 +17,15 @@ export const api = {
   getSwitches: () => axios.get(`${API_BASE}/switches`),
   getLinks: () => axios.get(`${API_BASE}/links`),
   getHosts: () => axios.get(`${API_BASE}/hosts`),
+  createSwitch: (name: string) => axios.post(`${API_BASE}/switches`, { name }),
+  deleteSwitch: (name: string) => axios.delete(`${API_BASE}/switches/${encodeURIComponent(name)}`),
+  createHost: (data: { name: string; ip: string; mac?: string; connected_switch: string }) =>
+    axios.post(`${API_BASE}/hosts`, data),
+  deleteHost: (name: string) => axios.delete(`${API_BASE}/hosts/${encodeURIComponent(name)}`),
+  createLink: (data: { src: string; dst: string; capacity_mbps?: number; latency_ms?: number }) =>
+    axios.post(`${API_BASE}/links`, data),
+  deleteLink: (src: string, dst: string) =>
+    axios.delete(`${API_BASE}/links/${encodeURIComponent(src)}/${encodeURIComponent(dst)}`),
   getMetrics: () => axios.get<NetworkMetrics>(`${API_BASE}/metrics`),
   getFlows: () => axios.get<FlowEntry[]>(`${API_BASE}/flows`),
   getRoutingDecisions: () => axios.get<RoutingDecision[]>(`${API_BASE}/routing/decisions`),
@@ -26,6 +35,8 @@ export const api = {
   // Controls
   recalculateRoute: (data: { source_ip: string; dest_ip: string; qos_class?: string }) =>
     axios.post(`${API_BASE}/routing/recalculate`, data),
+  installRoute: (data: { installation_id: string; source_ip: string; dest_ip: string; path: string[] }) =>
+    axios.post(`${API_BASE}/routing/install`, data),
   startTraffic: (data: { src_host: string; dst_host: string; rate_mbps: number; duration_sec: number; protocol?: string }) =>
     axios.post(`${API_BASE}/network/traffic/start`, data),
   stopTraffic: () => axios.post(`${API_BASE}/network/traffic/stop`),

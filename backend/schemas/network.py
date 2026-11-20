@@ -44,3 +44,31 @@ class ExperimentStartRequest(BaseModel):
     topology: str = "mesh"
     traffic_rate_mbps: float = 80.0
     duration_sec: int = 60
+
+
+class SwitchCreateRequest(BaseModel):
+    name: str = Field(..., min_length=2, max_length=32, pattern=r"^[A-Za-z][A-Za-z0-9_-]*$")
+
+
+class HostCreateRequest(BaseModel):
+    name: str = Field(..., min_length=2, max_length=32, pattern=r"^[A-Za-z][A-Za-z0-9_-]*$")
+    ip: str = Field(..., min_length=7, max_length=64)
+    mac: Optional[str] = None
+    connected_switch: str = Field(..., min_length=2, max_length=32)
+
+
+class LinkCreateRequest(BaseModel):
+    src: str = Field(..., min_length=2, max_length=32)
+    dst: str = Field(..., min_length=2, max_length=32)
+    capacity_mbps: float = Field(default=100.0, gt=0, le=100000)
+    latency_ms: float = Field(default=5.0, ge=0, le=60000)
+
+
+class RouteInstallRequest(BaseModel):
+    installation_id: str = Field(..., min_length=8, max_length=128, pattern=r"^[A-Za-z0-9._:-]+$")
+    source_ip: str = Field(..., min_length=7, max_length=64)
+    dest_ip: str = Field(..., min_length=7, max_length=64)
+    path: List[str] = Field(..., min_length=1, max_length=64)
+    priority: int = Field(default=100, ge=1, le=65535)
+    idle_timeout: int = Field(default=300, ge=0, le=86400)
+    cookie: int = Field(default=0, ge=0)

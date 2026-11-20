@@ -62,6 +62,8 @@ class DijkstraRouter:
                 total_latency = 0.0
                 max_util = 0.0
                 total_loss = 0.0
+                cost_breakdown = {"latency": 0.0, "utilization": 0.0, "packet_loss": 0.0, "congestion_penalty": 0.0}
+                edge_metrics = []
                 for i in range(len(path_nodes) - 1):
                     u, v = path_nodes[i], path_nodes[i+1]
                     edge = G[u][v]
@@ -69,14 +71,56 @@ class DijkstraRouter:
                     total_latency += edge.get("latency_ms", 5.0)
                     max_util = max(max_util, edge.get("utilization_pct", 0.0))
                     total_loss += edge.get("loss_pct", 0.0)
+                    explanation = self.cost_calculator.explain_edge_cost(edge)
+                    if explanation["valid"]:
+                        for key, value in explanation["components"].items():
+                            cost_breakdown[key] += value
+                        edge_metrics.append({
+                            "src": u,
+                            "dst": v,
+                            **explanation["metrics"],
+                            "cost": explanation["cost"],
+                        })
                     
                 results.append({
                     "path": path_nodes,
                     "cost": round(cost, 4),
                     "latency_ms": round(total_latency, 2),
                     "max_utilization_pct": round(max_util, 2),
-                    "total_loss_pct": round(total_loss, 2)
+                    "total_loss_pct": round(total_loss, 2),
+                    "cost_breakdown": {
+                        key: round(value, 4) for key, value in cost_breakdown.items()
+                    },
+                    "edge_metrics": edge_metrics,
                 })
         except (nx.NetworkXNoPath, nx.NetworkXError):
             pass
         return results
+
+    def explain_route(self, src_dpid: str, dst_dpid: str, k: int = 3) -> Dict[str, Any]:
+        candidates = self.calculate_k_shortest_paths(src_dpid, dst_dpid, k=k)
+        if not candidates:
+            return {
+                "selected_path": None,
+                "selected_cost": None,
+                "candidates": [],
+                "explanation": "No reachable path exists using active links with valid measurements.",
+            }
+        selected = candidates[0]
+        for index, candidate in enumerate(candidates):
+            candidate["rank"] = index + 1
+            candidate["selected"] = index == 0
+            candidate["decision"] = (
+                "Selected: lowest measured composite cost."
+                if index == 0
+                else f"Rejected: composite cost is {candidate['cost'] - selected['cost']:.4f} higher than the selected path."
+            )
+        return {
+            "selected_path": selected["path"],
+            "selected_cost": selected["cost"],
+            "candidates": candidates,
+            "explanation": (
+                f"Selected {' -> '.join(selected['path'])} because it has the lowest "
+                f"measured composite cost ({selected['cost']:.4f}) among {len(candidates)} reachable candidates."
+            ),
+        }

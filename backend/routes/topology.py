@@ -2,14 +2,20 @@
 Topology, Switches, Links, Hosts, Flows, Traffic, Routing, Alerts, and Experiments API Endpoints
 """
 from fastapi import APIRouter, HTTPException
+import httpx
 from typing import List, Dict, Any
 from backend.services.topology_service import topology_service
 from backend.database.connection import db_manager
+from backend.config.settings import settings
 from backend.schemas.network import (
     RecalculateRouteRequest,
     TrafficStartRequest,
     FailureSimulateRequest,
-    ExperimentStartRequest
+    ExperimentStartRequest,
+    SwitchCreateRequest,
+    HostCreateRequest,
+    LinkCreateRequest,
+    RouteInstallRequest
 )
 from controller.routing.dijkstra import DijkstraRouter
 from controller.routing.cost_function import CostCalculator
@@ -42,6 +48,62 @@ async def get_links():
 async def get_hosts():
     return topology_service.get_topology().hosts
 
+
+@switches_router.post("/api/switches", status_code=201)
+async def create_switch(req: SwitchCreateRequest):
+    try:
+        return topology_service.add_switch(req.name)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@switches_router.delete("/api/switches/{name}")
+async def delete_switch(name: str):
+    try:
+        topology_service.remove_switch(name)
+        return {"status": "SUCCESS", "removed": name}
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@hosts_router.post("/api/hosts", status_code=201)
+async def create_host(req: HostCreateRequest):
+    try:
+        return topology_service.add_host(req.name, req.ip, req.connected_switch, req.mac)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@hosts_router.delete("/api/hosts/{name}")
+async def delete_host(name: str):
+    try:
+        topology_service.remove_host(name)
+        return {"status": "SUCCESS", "removed": name}
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@links_router.post("/api/links", status_code=201)
+async def create_link(req: LinkCreateRequest):
+    try:
+        topology_service.add_connection(req.src, req.dst, req.capacity_mbps, req.latency_ms)
+        return {"status": "SUCCESS", "src": req.src, "dst": req.dst}
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@links_router.delete("/api/links/{src}/{dst}")
+async def delete_link(src: str, dst: str):
+    try:
+        topology_service.remove_connection(src, dst)
+        return {"status": "SUCCESS", "src": src, "dst": dst}
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
 @flows_router.get("/api/flows")
 async def get_flows():
     return [
@@ -69,7 +131,39 @@ async def get_flows():
             "duration_sec": 420,
             "status": "ACTIVE"
         }
+
     ]
+
+@routing_router.post("/api/routing/install")
+async def install_route(req: RouteInstallRequest):
+    document = req.model_dump()
+    document["requested_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    document["request_type"] = "manual"
+    document["status"] = "REQUESTED"
+    if not settings.controller_api_token or settings.controller_api_token == "change-me":
+        document.update({"status": "FAILED", "failure_details": "CONTROLLER_API_TOKEN is not configured"})
+        await db_manager.insert_one("routing_decisions", document)
+        raise HTTPException(status_code=503, detail="Controller authentication is not configured")
+    try:
+        timeout = httpx.Timeout(15.0, connect=3.0)
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            response = await client.post(
+                f"{settings.controller_api_url}/routes/install",
+                json=req.model_dump(),
+                headers={"Authorization": f"Bearer {settings.controller_api_token}"},
+            )
+        if response.status_code >= 400:
+            document.update({"status": "FAILED", "failure_details": response.text})
+            await db_manager.insert_one("routing_decisions", document)
+            raise HTTPException(status_code=502, detail="Controller rejected route installation")
+        result = response.json()
+        document.update(result)
+        await db_manager.insert_one("routing_decisions", document)
+        return result
+    except httpx.HTTPError as exc:
+        document.update({"status": "FAILED", "failure_details": str(exc)})
+        await db_manager.insert_one("routing_decisions", document)
+        raise HTTPException(status_code=502, detail="Controller management API is unavailable") from exc
 
 @traffic_router.get("/api/metrics")
 async def get_metrics():
@@ -155,7 +249,20 @@ async def get_routing_decisions():
 
 @routing_router.post("/api/routing/recalculate")
 async def recalculate_route(req: RecalculateRouteRequest):
-    router = DijkstraRouter(topology_service.network_graph)
+    qos_weights = {
+        "VOICE": {"latency": 0.7, "utilization": 0.1, "loss": 0.2},
+        "VIDEO": {"latency": 0.2, "utilization": 0.6, "loss": 0.2},
+        "WEB": {"latency": 0.4, "utilization": 0.4, "loss": 0.2},
+        "BACKGROUND": {"latency": 0.1, "utilization": 0.8, "loss": 0.1},
+    }.get(req.qos_class.upper(), {"latency": 0.4, "utilization": 0.4, "loss": 0.2})
+    router = DijkstraRouter(
+        topology_service.network_graph,
+        CostCalculator(
+            alpha=qos_weights["latency"],
+            beta=qos_weights["utilization"],
+            gamma=qos_weights["loss"],
+        ),
+    )
     hosts_by_ip = {
         host.ip: host.connected_switch
         for host in topology_service.get_topology().hosts
@@ -168,13 +275,16 @@ async def recalculate_route(req: RecalculateRouteRequest):
             detail=f"Unknown host pair: {req.source_ip} -> {req.dest_ip}",
         )
 
-    paths = router.calculate_k_shortest_paths(src_switch, dst_switch, k=3)
+    explanation = router.explain_route(src_switch, dst_switch, k=3)
     return {
         "status": "SUCCESS",
         "source": req.source_ip,
         "dest": req.dest_ip,
         "qos_class": req.qos_class,
-        "candidate_paths": paths
+        "candidate_paths": explanation["candidates"],
+        "selected_path": explanation["selected_path"],
+        "selected_cost": explanation["selected_cost"],
+        "explanation": explanation["explanation"],
     }
 
 @alerts_router.get("/api/alerts")

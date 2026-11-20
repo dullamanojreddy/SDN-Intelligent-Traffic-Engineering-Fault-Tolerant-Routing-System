@@ -127,6 +127,15 @@ Dark Network Operations Dashboard aesthetic with neon/purple cyber accents (glas
 
 ## Completed Features
 - [x] Foundation & Repository Architecture (Milestone 1)
+
+## Route Installation Integration
+- The controller exclusively owns OpenFlow installation and active datapath sessions.
+- The authenticated controller management API listens on `CONTROLLER_REST_PORT` and accepts `POST /routes/install`.
+- FastAPI relays manual installation requests through `POST /api/routing/install` and persists immutable results in `routing_decisions`.
+- Installation requests require a unique `installation_id`; repeated IDs are idempotent in the controller process.
+- Controller validation resolves host ingress/egress ports and inter-switch ports from discovered topology.
+- `INSTALLED` with `registry_verification_status=VERIFIED` means the controller's installed-flow registry contains every route switch.
+- `verification_status=NOT_RUN` is intentional until actual OpenFlow flow statistics or OVS flow-table inspection is implemented. Foundation & Repository Architecture (Milestone 1)
 - [x] Project Context & AI Memory System (`docs/PROJECT_CONTEXT.md`)
 - [x] Complete System Documentation (`docs/*.md`, `README.md`)
 - [x] Backend Skeleton (FastAPI, WebSocket Manager, Pydantic Schemas, Mongo fallback)

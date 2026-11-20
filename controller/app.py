@@ -4,6 +4,7 @@ SDN-ITE OpenFlow 1.3 Controller Application & Engine
 import sys
 import os
 import asyncio
+import time
 from typing import Dict, List, Optional, Tuple, Any
 
 # Ensure project root is in sys.path
@@ -31,7 +32,9 @@ from controller.openflow.flow_manager import FlowManager
 from controller.openflow.packet_handler import PacketHandler
 from controller.openflow.stats_manager import StatsManager
 from controller.topology.discovery import TopologyDiscovery
-from controller.topology.state_bridge import set_link_state
+from controller.topology.state_bridge import reset_link_states, set_link_state
+from controller.routing.route_installer import RouteInstallationService
+from controller.management_api import ControllerManagementAPI
 
 
 class SDNTrafficEngineApp:
@@ -90,6 +93,10 @@ class SDNTrafficEngineApp:
         # Datapath and Flow references
         self.datapaths = self.switch_manager.datapaths
         self.active_flows = self.flow_manager.active_flows
+        self.route_installer = RouteInstallationService(self)
+        self.management_api = ControllerManagementAPI(
+            self, "0.0.0.0", settings.rest_port, settings.api_token
+        )
 
         log.info("=" * 60)
         log.info("SDN Intelligent Traffic Engineering Controller Initialized")
@@ -106,6 +113,20 @@ class SDNTrafficEngineApp:
         """Called when an OpenFlow 1.3 switch finishes handshake."""
         self.network_graph.add_switch(dp.sw_id)
         log.info(f"Connected to Switch {dp.sw_id} ({dp.addr})")
+        expected_switches = {f"s{i}" for i in range(1, 8)}
+        connected_switches = set(self.switch_manager.datapaths)
+        if expected_switches.issubset({f"s{dpid}" for dpid in connected_switches}):
+            # A complete fresh Mininet session supersedes link observations
+            # from an earlier session.
+            reset_link_states()
+            for u, v, data in self.network_graph.graph.edges(data=True):
+                self.network_graph.update_link_metrics(
+                    u,
+                    v,
+                    utilization_pct=data.get("utilization_pct", 0.0),
+                    is_active=True,
+                )
+                set_link_state(f"{u}-{v}", True)
         if self.event_manager:
             self.event_manager.emit(
                 "switch_connected", {"switch": dp.sw_id, "dpid": dp.dpid, "addr": str(dp.addr)}
@@ -150,10 +171,17 @@ class SDNTrafficEngineApp:
                 self._trigger_failover_recovery(ev.data.get("link_id", ""))
         else:
             # Port is UP - update any matching links to active
+            link_restored = False
             for u, v, d in self.network_graph.graph.edges(data=True):
                 if (u == dp.sw_id and d.get("src_port") == status.port_no) or (v == dp.sw_id and d.get("dst_port") == status.port_no):
                     self.network_graph.update_link_metrics(u, v, utilization_pct=d.get("utilization_pct", 0.0), is_active=True)
                     set_link_state(f"{u}-{v}", True)
+                    link_restored = True
+
+            if link_restored:
+                # Port-up events restore graph edges, but existing flows were
+                # removed during failover. Reinstall routes for known hosts.
+                asyncio.create_task(self._recover_host_routes(f"{dp.sw_id}-port-{status.port_no}"))
 
     def _on_congestion_alert(self, link_id: str, utilization: float):
         """Reroute host pairs whose current path contains a congested link."""
@@ -357,6 +385,10 @@ class SDNTrafficEngineApp:
     # --------------------------------------------------------------------------
     def initialize_mesh_topology(self):
         """Initializes the baseline target mesh topology for discovery and testing."""
+        # Link observations belong to one controller lifetime. Do not expose
+        # failures from a previous run after a clean topology initialization.
+        reset_link_states()
+
         switches_list = ["s1", "s2", "s3", "s4", "s5", "s6", "s7"]
         for sw in switches_list:
             self.network_graph.add_switch(sw)
@@ -384,18 +416,22 @@ class SDNTrafficEngineApp:
         Background worker that provisions and maintains proactive baseline OpenFlow routes
         once mesh switches complete their OpenFlow 1.3 handshakes.
         """
+        last_install = 0.0
         while True:
             try:
                 await asyncio.sleep(0.2)
                 connected_switches = set(dp.sw_id for dp in self.switch_manager.datapaths.values())
                 expected_switches = {f"s{i}" for i in range(1, 8)}
-                if expected_switches.issubset(connected_switches):
+                if (
+                    expected_switches.issubset(connected_switches)
+                    and time.monotonic() - last_install >= 5.0
+                ):
                     await self.packet_handler.install_proactive_mesh_routes()
+                    last_install = time.monotonic()
                     log.info(
                         "[PROACTIVE ROUTE] Baseline OpenFlow forwarding rules "
                         "successfully provisioned for all mesh switches."
                     )
-                    await asyncio.sleep(30.0)
                 elif connected_switches:
                     missing = sorted(expected_switches - connected_switches)
                     log.debug(
@@ -414,6 +450,8 @@ class SDNTrafficEngineApp:
         
         # Start TCP server
         await self.switch_manager.start_server(host=host, port=port)
+        await self.management_api.start()
+        log.info("Controller management API listening on port %s", settings.rest_port)
         # Start LLDP Discovery loop
         self.topology_discovery.start()
         # Start Statistics Poller
@@ -431,6 +469,7 @@ class SDNTrafficEngineApp:
         finally:
             self.topology_discovery.stop()
             self.stats_manager.stop()
+            await self.management_api.stop()
             await self.switch_manager.stop_server()
 
 

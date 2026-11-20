@@ -46,7 +46,7 @@ LINKS: Dict[Tuple[str, int], str] = {
 
 
 def _flow_output_port(switch: str) -> Optional[int]:
-    """Return the installed destination rule's output port for a switch."""
+    """Return an installed IPv4 or ARP destination rule's output port."""
     command = [
         "ovs-ofctl",
         "-O",
@@ -69,20 +69,29 @@ def _flow_output_port(switch: str) -> Optional[int]:
         print(f"Unable to read flows from {switch}: {detail}")
         return None
 
+    arp_port: Optional[int] = None
     for line in result.stdout.splitlines():
         if (
             f"priority={FLOW_PRIORITY}," not in line
-            or f"nw_dst={DESTINATION_IP}" not in line
             or "actions=" not in line
         ):
             continue
 
         action = line.split("actions=", 1)[1]
-        match = re.search(r"(?:^|,)output:(\d+)(?:,|$)", action)
-        if match:
-            return int(match.group(1))
+        numeric_match = re.search(r"(?:^|,)output:(\d+)(?:,|$)", action)
+        named_match = re.search(r'(?:^|,)output:"[^"]+-eth(\d+)"(?:,|$)', action)
+        port_match = numeric_match or named_match
+        if not port_match:
+            continue
 
-    return None
+        if f"nw_dst={DESTINATION_IP}" in line:
+            return int(port_match.group(1))
+        if f"arp_tpa={DESTINATION_IP}" in line:
+            arp_port = int(port_match.group(1))
+
+    if arp_port is not None:
+        print(f"IPv4 route missing at {switch}; using matching ARP output port")
+    return arp_port
 
 
 def show_path() -> int:

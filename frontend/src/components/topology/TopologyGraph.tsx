@@ -1,6 +1,6 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { TopologyData, SwitchNode, HostNode, LinkEdge } from '../../types/network';
-import { Server, Monitor, Activity, ArrowRight, Zap, AlertCircle } from 'lucide-react';
+import { Activity } from 'lucide-react';
 
 interface TopologyGraphProps {
   topology: TopologyData | null;
@@ -25,42 +25,41 @@ export const TopologyGraph: React.FC<TopologyGraphProps> = ({
     );
   }
 
-  // Pre-computed graphical coordinates for standard 7-switch mesh
-  const nodePositions: Record<string, { x: number; y: number; label: string; type: 'switch' | 'host' }> = {
+  const defaultPositions: Record<string, { x: number; y: number }> = {
     // Hosts
-    'h1': { x: 50, y: 150, label: 'H1 (10.0.0.1)', type: 'host' },
-    'h2': { x: 50, y: 350, label: 'H2 (10.0.0.2)', type: 'host' },
-    'h7': { x: 750, y: 150, label: 'H7 (10.0.0.7)', type: 'host' },
-    'h8': { x: 750, y: 350, label: 'H8 (10.0.0.8)', type: 'host' },
+    'h1': { x: 50, y: 150 }, 'h2': { x: 50, y: 350 },
+    'h7': { x: 750, y: 150 }, 'h8': { x: 750, y: 350 },
     // Switches
-    's1': { x: 180, y: 250, label: 'S1 Ingress', type: 'switch' },
-    's2': { x: 330, y: 140, label: 'S2 Core-T', type: 'switch' },
-    's3': { x: 330, y: 360, label: 'S3 Core-B', type: 'switch' },
-    's4': { x: 440, y: 250, label: 'S4 Center', type: 'switch' },
-    's5': { x: 550, y: 140, label: 'S5 Agg-T', type: 'switch' },
-    's6': { x: 550, y: 360, label: 'S6 Agg-B', type: 'switch' },
-    's7': { x: 670, y: 250, label: 'S7 Egress', type: 'switch' },
+    's1': { x: 180, y: 250 }, 's2': { x: 330, y: 140 },
+    's3': { x: 330, y: 360 }, 's4': { x: 440, y: 250 },
+    's5': { x: 550, y: 140 }, 's6': { x: 550, y: 360 }, 's7': { x: 670, y: 250 },
   };
+  const [positions, setPositions] = useState(defaultPositions);
+  useEffect(() => {
+    const next = { ...positions };
+    topology.switches.forEach((sw, index) => {
+      if (!next[sw.dpid]) next[sw.dpid] = { x: 180 + (index % 5) * 125, y: 100 + (Math.floor(index / 5) % 3) * 150 };
+    });
+    topology.hosts.forEach((host, index) => {
+      const id = (host.name || host.ip).toLowerCase().replace(/[^a-z0-9]/g, '');
+      if (!next[id]) next[id] = { x: 70, y: 80 + (index % 5) * 85 };
+    });
+    setPositions(next);
+  }, [topology]);
 
-  const getLinkColor = (link: LinkEdge) => {
-    if (!link.is_active || link.status === 'failed') return '#EF4444'; // red
-    if (link.utilization_pct >= 90) return '#EF4444'; // critical red
-    if (link.utilization_pct >= 80) return '#F97316'; // orange
-    if (link.utilization_pct >= 60) return '#F59E0B'; // yellow
-    return '#10B981'; // nominal green
-  };
+  const nodePositions: Record<string, { x: number; y: number; label: string; type: 'switch' | 'host' }> = {};
+  topology.switches.forEach((sw) => {
+    const position = positions[sw.dpid];
+    if (position) nodePositions[sw.dpid] = { ...position, label: sw.name, type: 'switch' };
+  });
+  topology.hosts.forEach((host) => {
+    const id = (host.name || host.ip).toLowerCase().replace(/[^a-z0-9]/g, '');
+    const position = positions[id];
+    if (position) nodePositions[id] = { ...position, label: `${host.name || id} (${host.ip})`, type: 'host' };
+  });
 
   return (
     <div className="relative glass-panel rounded-2xl p-4 overflow-hidden border border-cyber-border/70">
-      {/* Legend & Stats Overlay */}
-      <div className="absolute top-4 left-4 z-10 flex items-center space-x-3 bg-cyber-card/90 backdrop-blur-md px-3 py-1.5 rounded-xl border border-cyber-border text-xs font-mono">
-        <span className="text-slate-400">Utilization:</span>
-        <span className="flex items-center space-x-1"><span className="w-2 h-2 rounded-full bg-emerald-500"></span><span className="text-slate-300">&lt;60%</span></span>
-        <span className="flex items-center space-x-1"><span className="w-2 h-2 rounded-full bg-amber-500"></span><span className="text-slate-300">60-80%</span></span>
-        <span className="flex items-center space-x-1"><span className="w-2 h-2 rounded-full bg-orange-500"></span><span className="text-slate-300">80-90%</span></span>
-        <span className="flex items-center space-x-1"><span className="w-2 h-2 rounded-full bg-red-500 animate-pulse"></span><span className="text-slate-300">&gt;90%</span></span>
-      </div>
-
       <svg viewBox="0 0 800 500" className="w-full h-[420px] select-none">
         <defs>
           <filter id="glow" x="-20%" y="-20%" width="140%" height="140%">
@@ -78,12 +77,8 @@ export const TopologyGraph: React.FC<TopologyGraphProps> = ({
           const dst = nodePositions[link.dst_dpid];
           if (!src || !dst) return null;
 
-          const color = getLinkColor(link);
+          const color = link.is_active ? '#10B981' : '#EF4444';
           const isSelected = selectedLinkId === link.link_id;
-
-          // Midpoint for label
-          const midX = (src.x + dst.x) / 2;
-          const midY = (src.y + dst.y) / 2;
 
           return (
             <g
@@ -101,34 +96,20 @@ export const TopologyGraph: React.FC<TopologyGraphProps> = ({
                 y2={dst.y}
                 stroke={color}
                 strokeWidth={isSelected ? 4 : 2.5}
-                strokeDasharray={!link.is_active ? '5,5' : 'none'}
+                strokeDasharray={link.is_active ? undefined : '8 5'}
                 filter={isSelected ? 'url(#glow)' : undefined}
                 className="transition-all duration-200 group-hover:stroke-purple-400 group-hover:stroke-[3.5]"
               />
-              {/* Utilization Tag */}
-              <rect
-                x={midX - 18}
-                y={midY - 9}
-                width="36"
-                height="16"
-                rx="4"
-                fill="#0E1017"
-                stroke={color}
-                strokeWidth="1"
-              />
-              <text
-                x={midX}
-                y={midY + 3}
-                fill="#E2E8F0"
-                fontSize="9"
-                fontFamily="monospace"
-                textAnchor="middle"
-                fontWeight="bold"
-              >
-                {link.utilization_pct.toFixed(0)}%
-              </text>
             </g>
           );
+        })}
+        {topology.hosts.map((host) => {
+          const hostId = (host.name || host.ip).toLowerCase().replace(/[^a-z0-9]/g, '');
+          const src = nodePositions[hostId];
+          const dst = nodePositions[host.connected_switch];
+          if (!src || !dst) return null;
+          return <line key={`${hostId}-${host.connected_switch}`} x1={src.x} y1={src.y} x2={dst.x} y2={dst.y}
+            stroke="#10B981" strokeWidth="2" strokeDasharray="4 3" />;
         })}
 
         {/* Nodes (Switches & Hosts) */}
@@ -145,6 +126,20 @@ export const TopologyGraph: React.FC<TopologyGraphProps> = ({
                 const sw = topology.switches.find((s) => s.dpid === id);
                 const h = topology.hosts.find((host) => host.name?.toLowerCase().includes(id) || host.mac.includes(id));
                 onSelectNode?.(sw || h || null);
+              }}
+              onMouseDown={(event) => {
+                const start = { x: event.clientX, y: event.clientY };
+                const original = { x: pos.x, y: pos.y };
+                const move = (moveEvent: MouseEvent) => setPositions((current) => ({
+                  ...current,
+                  [id]: { x: Math.max(20, Math.min(780, original.x + moveEvent.clientX - start.x)), y: Math.max(20, Math.min(480, original.y + moveEvent.clientY - start.y)) },
+                }));
+                const stop = () => {
+                  window.removeEventListener('mousemove', move);
+                  window.removeEventListener('mouseup', stop);
+                };
+                window.addEventListener('mousemove', move);
+                window.addEventListener('mouseup', stop);
               }}
               className="cursor-pointer group"
             >

@@ -2,20 +2,12 @@ import React from 'react';
 import { NavLink } from 'react-router-dom';
 import {
   LayoutDashboard,
-  Network,
-  Activity,
-  GitCommit,
   GitFork,
-  FlaskConical,
 } from 'lucide-react';
 
 const NAV_ITEMS = [
   { name: 'Dashboard', path: '/', icon: LayoutDashboard },
-  { name: 'Topology', path: '/topology', icon: Network },
-  { name: 'Traffic & Metrics', path: '/traffic', icon: Activity },
-  { name: 'Flow Tables', path: '/flows', icon: GitCommit },
   { name: 'Routing Decisions', path: '/routing', icon: GitFork },
-  { name: 'Experiments', path: '/experiments', icon: FlaskConical },
 ];
 
 export const Sidebar: React.FC = () => (

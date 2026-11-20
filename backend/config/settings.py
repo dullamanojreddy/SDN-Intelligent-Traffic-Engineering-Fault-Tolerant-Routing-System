@@ -17,6 +17,8 @@ class Settings(BaseModel):
     controller_host: str = Field(default="127.0.0.1")
     controller_of_port: int = Field(default=6653)
     controller_rest_port: int = Field(default=8080)
+    controller_api_url: str = Field(default="http://127.0.0.1:8080")
+    controller_api_token: str = Field(default="")
 
     @property
     def cors_list(self) -> List[str]:
@@ -31,5 +33,7 @@ settings = Settings(
     mongodb_database=os.getenv("MONGODB_DATABASE", "sdn_traffic_engineering"),
     controller_host=os.getenv("CONTROLLER_HOST", "127.0.0.1"),
     controller_of_port=int(os.getenv("CONTROLLER_OF_PORT", 6653)),
-    controller_rest_port=int(os.getenv("CONTROLLER_REST_PORT", 8080))
+    controller_rest_port=int(os.getenv("CONTROLLER_REST_PORT", 8080)),
+    controller_api_url=os.getenv("CONTROLLER_API_URL", "http://127.0.0.1:8080"),
+    controller_api_token=os.getenv("CONTROLLER_API_TOKEN", "")
 )

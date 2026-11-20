@@ -40,6 +40,19 @@ def get_link_states() -> Dict[str, bool]:
         return _read_states()
 
 
+def reset_link_states() -> None:
+    """Clear link observations when a new controller process starts."""
+    with _LOCK:
+        try:
+            _STATE_FILE.unlink()
+        except FileNotFoundError:
+            pass
+        except OSError:
+            # The next read will retain the previous state if the file cannot
+            # be removed; callers should not fail controller startup for this.
+            return
+
+
 def _read_states() -> Dict[str, bool]:
     try:
         with _STATE_FILE.open("r", encoding="utf-8") as stream:
